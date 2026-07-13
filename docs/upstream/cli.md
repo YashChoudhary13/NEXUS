@@ -1,3 +1,6 @@
+<!-- Restored from upstream Craft Agents (commit 4289b16, v0.11.1) during the 2026-07-13 docs
+     reorganization. Original path: docs/cli.md. Status: Current upstream capability. -->
+
 # craft-cli — CLI Reference
 
 Terminal client for Craft Agent server. Connects over WebSocket (`ws://` or `wss://`) to a running headless server.
