@@ -21,8 +21,8 @@ Phase 3  →  Brain UI, Obsidian workflows, and Graphify graph
 
 | Phase | Plan | Status |
 |-------|------|--------|
-| **Phase 0 — Foundation & repository stabilization** | [`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md) | 🟡 Nearly complete — remaining: launch smoke-test, commit docs/conventions, produce Phase 1 detailed plan |
-| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[PLANNED]` — scoped in master plan; detailed implementation plan **not yet produced** |
+| **Phase 0 — Foundation & repository stabilization** | [`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md) | ✅ **Complete** (2026-07-14) |
+| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[PLANNED]` — **detailed implementation plan ready (2026-07-14)**; awaiting owner review + go-ahead (starts with the S1 multi-Codex spike) |
 | **Memory foundation — shared project context** | [`../plans/memory-foundation.md`](../plans/memory-foundation.md) | `[PLANNED]` — after Phase 1, before Phase 2 |
 | **Phase 2 — Swarm & multi-agent orchestration** | [`../plans/phase-2-swarm.md`](../plans/phase-2-swarm.md) | `[PLANNED]` |
 | **Phase 3 — Brain, Obsidian & Graphify** | [`../plans/phase-3-brain.md`](../plans/phase-3-brain.md) | `[PLANNED]` |
@@ -43,31 +43,38 @@ These run alongside the product phases; each is one scoped concern.
 | Craft-hosted service decoupling (docs MCP, OAuth relay, session sharing, `agents.craft.do`) | same §Technically significant | `[DECIDED]` direction (D-005, D-006: keep for now; docs MCP becomes optional/off later); execution `[PLANNED]` |
 | Security hardening (credential key model, env-strip allowlist, token compare, TLS enforcement) | [`../architecture/craft-baseline.md`](../architecture/craft-baseline.md) §9 | `[DECIDED]` as a later dedicated milestone (D-009); scope `[PLANNED]` |
 
-## Current milestone: **Craft Foundation Ready**
-
-Goal: reach the point where Phase 1 implementation can begin safely.
+## Milestone: **Craft Foundation Ready** — ✅ COMPLETE (2026-07-14)
 
 - [x] Create the official NEXUS repository fork (`YashChoudhary13/NEXUS`)
 - [x] Clone it locally
-- [x] Add the Craft repository as `upstream`
+- [x] Add the Craft repository as `upstream` (push URL disabled 2026-07-14 — accidental
+      upstream pushes now impossible)
 - [x] Build the unchanged desktop application (main/preload/renderer builds pass)
-- [ ] Launch smoke-test of the unmodified app (interactive run not yet performed)
+- [x] Launch smoke-test of the unmodified app — **PASS** 2026-07-14 (with a
+      `CRAFT_CONFIG_DIR` partial-isolation caveat, see
+      [`../development/testing-and-quality-gates.md`](../development/testing-and-quality-gates.md))
 - [x] Run the test suite (shared tests pass; all pre-existing failures documented)
 - [x] Record the upstream baseline commit (`4289b16`, v0.11.1 — [`../development/repository-strategy.md`](../development/repository-strategy.md))
 - [x] Create `docs/architecture/craft-baseline.md`
 - [x] Create `docs/research/repository-register.md`
 - [x] Establish branch and worktree conventions ([`../development/`](../development/repository-strategy.md)) — committed 2026-07-13
-- [ ] Produce the detailed Phase 1 implementation plan
+- [x] Produce the detailed Phase 1 implementation plan
+      ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md), 2026-07-14)
+
+**Current milestone → Phase 1 implementation.** Blocked on owner sign-off of the Phase 1
+plan; the first implementation act is its S1 multi-Codex spike. PR #1 branding runs in
+parallel once artwork arrives.
 
 ## Open questions `[OPEN]`
 
-1. **Phase 1 plan path.** The master plan references
-   `docs/superpowers/plans/2026-07-13-multi-account-chat-foundation.md`; this repo
-   standardizes on `docs/plans/`. Proposed: write the detailed plan at
-   `docs/plans/phase-1-multi-account-chat.md` (extending the existing scope doc). Confirm.
-2. **`develop` branch.** The master plan's recommended git structure includes `develop`;
+1. **`develop` branch.** The master plan's recommended git structure includes `develop`;
    create it now or defer until Phase 1 implementation starts?
-3. **PR #1 artwork + go-ahead** (carried over; D-008).
+2. **PR #1 artwork + go-ahead** (carried over; D-008).
+3. **Phase 1 plan sign-off** + its three scoped questions (Copilot identity timing, picker
+   label rename timing, handoff wording) —
+   [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) §8.
 
-**Resolved 2026-07-13:** docs committed and pushed to the fork (owner-authorized direct
-push to `origin/main`); upstream root `README.md` removed until the publish phase (D-019).
+**Resolved:** docs committed and pushed to the fork (2026-07-13, owner-authorized direct
+push to `origin/main`); upstream root `README.md` removed until the publish phase (D-019);
+Phase 1 plan path = `docs/plans/phase-1-multi-account-chat.md` (2026-07-14, settled by the
+owner's instruction to produce the plan).

@@ -3,11 +3,11 @@
 > **The single most important file for an agent starting cold.** Keep it truthful and current.
 > Update after every task (ritual in [`README.md`](./README.md)).
 
-- **Last updated:** 2026-07-13
+- **Last updated:** 2026-07-14
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `main` (fork `origin/main` — docs committed & pushed 2026-07-13, owner-authorized).
-- **Phase:** Phase 0 (Foundation) nearly complete → preparing Phase 1 planning.
-  Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
+- **Branch:** `main` (fork `origin/main`). `upstream` push URL is **DISABLED** (safety).
+- **Phase:** ✅ **Phase 0 COMPLETE (2026-07-14)** → Phase 1 detailed plan ready, awaiting
+  owner sign-off. Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
 
@@ -35,21 +35,27 @@ modified** — all work so far is investigation, validation, planning, and docum
 - **2026-07-13:** docs committed and pushed directly to `origin/main` (owner-authorized
   one-off exception to D-010; upstream untouched). Upstream root `README.md` removed until
   the publish phase (D-019).
+- **2026-07-14:** `upstream` push URL disabled; launch smoke-test **PASS** (Phase 0 criterion
+  closed, `CRAFT_CONFIG_DIR` caveat documented); **detailed Phase 1 implementation plan
+  produced** → [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
+  **Phase 0 = COMPLETE.**
 
 ## Next up ⏭️ (in order)
 
-1. **Close out Phase 0** ([`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md)):
-   - Interactive launch smoke-test of the unmodified app (`bun run electron:dev`) — builds
-     pass, but a human-visible launch hasn't been performed yet.
-2. **Produce the detailed Phase 1 implementation plan** (multi-account chat foundation) —
-   scope in [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
-   The master plan calls this the gate before any feature work.
+1. **Owner: review + sign off the Phase 1 plan**
+   ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md)) —
+   including its three §8 scoped questions.
+2. **Start Phase 1 implementation** with the **S1 spike** (verify two simultaneous Codex
+   logins end-to-end; needs the owner's second account for the OAuth login). Then PR-1A →
+   1B → 1C/1D → 1E per the plan.
 3. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
-   explicit go-ahead. Runs on its own branch, independent of Phase 1 planning.
+   explicit go-ahead. Runs on its own branch, parallel to Phase 1.
 4. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
 
 ## Blockers / owner input needed
 
+- ⏳ **Phase 1 plan sign-off** (+ §8 questions: Copilot identity timing, picker label rename
+  timing, handoff wording).
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -66,6 +72,19 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-14 — Phase 0 closed: upstream push disabled, launch smoke PASS, Phase 1 plan
+  produced.** (1) `git remote set-url --push upstream DISABLED` — accidental upstream pushes
+  now impossible. (2) Launch smoke-test of the unmodified app passed (`bun run electron:dev`,
+  isolated-ish config, clean shutdown); discovered and documented that `CRAFT_CONFIG_DIR`
+  isolation is **partial** — default workspace data still lands in `~/.craft-agent`
+  (pre-existing dir on this machine; smoke run added a skeleton `workspaces/my-workspace` +
+  2 scheduler-tick lines — benign, left in place). See testing-and-quality-gates.md.
+  (3) Produced the detailed Phase 1 implementation plan from real code investigation — key
+  findings: identity fields + storage allowlist + Claude duplicate-detection UI + suffixed
+  multi-account slugs + fork dispatch **all already exist upstream**; Codex `id_token` is
+  persisted but never decoded (the core gap). Phase 1 = generalization, sequenced S1 spike →
+  PR-1A…1E with no stored-schema changes. Docs updated (roadmap milestone complete, phase-0
+  ✅). Next agent: do NOT start Phase 1 without owner sign-off; start with the S1 spike.
 - **2026-07-13 — README removal + first push to the fork.** Owner approved committing the
   documentation set and instructed a direct push to their fork — pushed to `origin/main`
   only (explicit one-off exception to D-010; `upstream` untouched). Removed the upstream

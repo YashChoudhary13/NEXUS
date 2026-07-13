@@ -48,6 +48,24 @@ export PATH="$HOME/.bun/bin:$PATH"
 **Not run (needs credentials/tools):** `--validate-server` CLI integration test (needs
 `ANTHROPIC_API_KEY`); `test:doc-tools` (Python `uv`/markitdown).
 
+## Launch smoke test (2026-07-14)
+
+`bun run electron:dev` — **PASS.** Full dev build (MCP servers, WA worker, main/preloads,
+Vite on 5173), Electron launched with all helper processes, renderer loaded, ConfigWatcher /
+AutomationSystem / SchedulerService initialized, ran steadily ~2 minutes, clean SIGTERM
+shutdown (exit 0). One benign fresh-state error line: `No LLM connection found for slug: null`
+(no connections configured yet).
+
+⚠️ **Isolation caveat (important for parallel/dev testing):** `CRAFT_CONFIG_DIR` is only
+**partially honored**. With it set to a scratch dir, global config/preferences/themes/
+tool-icons/permissions were created in the scratch dir — but the auto-created default
+workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-workspace`
+(tilde path stored in config.json), and window-state/logs/docs syncs also touched
+`~/.craft-agent`. A smoke run therefore writes a skeleton workspace (+ scheduler-tick lines in
+`events.jsonl`) into the real home config dir even when `CRAFT_CONFIG_DIR` points elsewhere.
+Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
+behavior — documented, not fixed; candidate note for the repo-health workstream.)
+
 ## Failure categories explained
 
 - **Stripped OSS files** (not code defects): `tsconfig.base.json` is missing — four tsconfigs
