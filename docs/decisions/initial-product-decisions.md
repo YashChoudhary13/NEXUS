@@ -1,12 +1,12 @@
-# Initial Product Decisions (D-001 … D-019)
+# Initial Product Decisions (D-001 … D-023)
 
-**Status:** all entries `[DECIDED]` · **Next free ID: D-020** · Conventions:
+**Status:** all entries `[DECIDED]` · **Next free ID: D-024** · Conventions:
 [`README.md`](./README.md).
 
-Batches, all 2026-07-13: **A)** foundation/fork-strategy decisions from the owner's planning
-sessions; **B)** product-direction decisions adopted with the
-[master plan](../product/nexus-master-plan-2026-07-13.md); **C)** post-adoption owner
-decisions.
+Batches: **A)** foundation/fork-strategy decisions from the owner's planning sessions
+(2026-07-13); **B)** product-direction decisions adopted with the
+[master plan](../product/nexus-master-plan-2026-07-13.md) (2026-07-13); **C)** post-adoption
+owner decisions (2026-07-13); **D)** Phase 1 sign-off decisions (2026-07-14).
 
 ---
 
@@ -112,3 +112,37 @@ stays available via the upstream repo and git history (`git show 4289b16:README.
 **Consequences:** the repo has no root README until publish; future upstream merges will
 surface modify/delete conflicts on `README.md` — resolve by keeping it deleted
 ([`../development/upstream-sync.md`](../development/upstream-sync.md) §Deliberate deletions).
+
+---
+
+## D. Phase 1 sign-off (2026-07-14, owner)
+
+Answers to the [Phase 1 plan](../plans/phase-1-multi-account-chat.md) §8 questions, given
+when the owner authorized implementation.
+
+### D-020 — Copilot identity is in Phase 1 scope
+Capture GitHub Copilot account identity within Phase 1 (not a fast-follow), as its **own work
+package (PR-1F)** after PR-1A. **Why:** the phase's promise is "the real identity of each
+account is visible" — for every OAuth provider the app ships. **Consequence:** the plan gains
+PR-1F (GitHub user lookup, fail-soft); the mechanism differs from the Codex JWT decode, so it
+stays a separate PR (one concern per PR).
+
+### D-021 — "Craft Agents Backend" picker label does not survive PR-1D
+Rename/replace the model-picker group label "Craft Agents Backend" as part of PR-1D's picker
+rework (×6 locales) rather than deferring to the UI-copy rebrand workstream. Exact replacement
+copy (likely dissolving into per-provider account groups) is approved at PR-1D review.
+**Why:** the picker is being rebuilt in that PR anyway; shipping a rebuilt picker that still
+says "Craft" is avoidable churn. **Consequence:** a deliberate, bounded carve-out from D-007's
+deferred descriptive-copy scope; the rest of the UI-copy rebrand stays deferred.
+
+### D-022 — Handoff action wording: "Continue with another agent"
+The PR-1E session action uses the master plan's wording, confirmed as the i18n baseline for
+all 6 locales.
+
+### D-023 — `develop` integration branch created; feature PRs target it
+`develop` was created from `main` on 2026-07-14. Phase 1+ feature branches are cut from
+`develop`; PRs target `develop` on the fork (`origin`); `develop` merges to `main` when a
+phase gate passes. **Why:** matches the master plan's decided branch structure; keeps `main`
+stable while a phase's multiple PRs integrate. **Consequence:** resolves the roadmap's open
+"develop timing" question; docs-maintenance commits by the owner's direct instruction remain
+the only exception to branch-first flow (D-010).

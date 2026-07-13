@@ -6,8 +6,10 @@
 - **Last updated:** 2026-07-14
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
 - **Branch:** `main` (fork `origin/main`). `upstream` push URL is **DISABLED** (safety).
-- **Phase:** ✅ **Phase 0 COMPLETE (2026-07-14)** → Phase 1 detailed plan ready, awaiting
-  owner sign-off. Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
+- **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 SIGNED OFF 2026-07-14 (D-020…D-023) —
+  implementation authorized**, delegated via the
+  [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); first act = S1 spike.
+  Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
 
@@ -28,7 +30,7 @@ modified** — all work so far is investigation, validation, planning, and docum
 - Craft-coupling map (retained identifiers vs. later decoupling) → [`../development/upstream-sync.md`](../development/upstream-sync.md).
 - Branding/compliance **PR #1 plan finalized** (owner-scoped, not yet implemented) →
   [`../plans/pr-01-identity-and-packaging.md`](../plans/pr-01-identity-and-packaging.md).
-- Decisions D-001…D-018 recorded → [`../decisions/initial-product-decisions.md`](../decisions/initial-product-decisions.md).
+- Decisions D-001…D-023 recorded → [`../decisions/initial-product-decisions.md`](../decisions/initial-product-decisions.md).
 - **2026-07-13:** master plan adopted; entire `docs/` system rebuilt to the canonical NEXUS
   structure (this documentation set). Root `AGENTS.md`/`CLAUDE.md` rewritten as thin shared
   bootstraps.
@@ -42,20 +44,19 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Next up ⏭️ (in order)
 
-1. **Owner: review + sign off the Phase 1 plan**
-   ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md)) —
-   including its three §8 scoped questions.
-2. **Start Phase 1 implementation** with the **S1 spike** (verify two simultaneous Codex
-   logins end-to-end; needs the owner's second account for the OAuth login). Then PR-1A →
-   1B → 1C/1D → 1E per the plan.
-3. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
+1. **Phase 1 implementation (delegated to Codex,
+   [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md))**: **S1 spike first** (verify
+   two simultaneous Codex logins end-to-end; the owner performs the real OAuth logins), record
+   claim findings in the plan, then PR-1A → 1B → 1C/1D/1F → 1E per
+   [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
+   Branches off `develop`, PRs → `develop` (D-023).
+2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
    explicit go-ahead. Runs on its own branch, parallel to Phase 1.
-4. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
+3. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
 
 ## Blockers / owner input needed
 
-- ⏳ **Phase 1 plan sign-off** (+ §8 questions: Copilot identity timing, picker label rename
-  timing, handoff wording).
+- ⏳ **S1 spike logins** — needs the owner interactively (two real ChatGPT/Codex accounts).
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -72,6 +73,16 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-14 — Phase 1 signed off; execution delegated to Codex.** Owner answered the plan's
+  §8 questions → decisions **D-020** (Copilot identity in Phase 1 as new PR-1F), **D-021**
+  ("Craft Agents Backend" picker label replaced in PR-1D, ×6 locales), **D-022** (wording
+  "Continue with another agent" confirmed), **D-023** (`develop` branch created from `main`;
+  feature branches off `develop`, PRs → `develop`; `develop` → `main` at phase gates). Plan
+  amended accordingly (status `[DECIDED]`, PR-1F added, §8 resolved); Codex kickoff prompt
+  authored → [`../plans/phase-1-kickoff-prompt-codex.md`](../plans/phase-1-kickoff-prompt-codex.md).
+  Docs-maintenance commit pushed to `origin/main` (established owner-authorized pattern);
+  `develop` pushed to `origin`. **Next agent (Codex): follow the kickoff prompt — S1 spike
+  first; owner performs the logins; stop if a second Codex login fails at the provider.**
 - **2026-07-14 — Phase 0 closed: upstream push disabled, launch smoke PASS, Phase 1 plan
   produced.** (1) `git remote set-url --push upstream DISABLED` — accidental upstream pushes
   now impossible. (2) Launch smoke-test of the unmodified app passed (`bun run electron:dev`,

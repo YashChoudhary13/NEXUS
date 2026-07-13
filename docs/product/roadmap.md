@@ -1,7 +1,7 @@
 # Roadmap
 
 **Status:** build order `[DECIDED]` (master plan); per-item statuses labeled.
-**Last updated:** 2026-07-13.
+**Last updated:** 2026-07-14.
 
 ## Build order
 
@@ -22,7 +22,7 @@ Phase 3  →  Brain UI, Obsidian workflows, and Graphify graph
 | Phase | Plan | Status |
 |-------|------|--------|
 | **Phase 0 — Foundation & repository stabilization** | [`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md) | ✅ **Complete** (2026-07-14) |
-| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[PLANNED]` — **detailed implementation plan ready (2026-07-14)**; awaiting owner review + go-ahead (starts with the S1 multi-Codex spike) |
+| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[DECIDED]` — **signed off 2026-07-14 (D-020…D-023); implementation authorized** and delegated ([kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md)); first act = S1 multi-Codex spike. No Phase 1 code landed yet |
 | **Memory foundation — shared project context** | [`../plans/memory-foundation.md`](../plans/memory-foundation.md) | `[PLANNED]` — after Phase 1, before Phase 2 |
 | **Phase 2 — Swarm & multi-agent orchestration** | [`../plans/phase-2-swarm.md`](../plans/phase-2-swarm.md) | `[PLANNED]` |
 | **Phase 3 — Brain, Obsidian & Graphify** | [`../plans/phase-3-brain.md`](../plans/phase-3-brain.md) | `[PLANNED]` |
@@ -39,7 +39,7 @@ These run alongside the product phases; each is one scoped concern.
 | **PR #1 — NEXUS identity & packaging** (trademark-required rename, icons, bundle ID, disable Craft auto-update) | [`../plans/pr-01-identity-and-packaging.md`](../plans/pr-01-identity-and-packaging.md) | `[DECIDED]` plan approved & scoped (D-004, D-007, D-008) — **awaiting owner artwork + go-ahead** |
 | Repo health (reconstruct missing `tsconfig.base.json`, refresh stale `bun.lock`, dead script refs, eslint debt) | [`../development/testing-and-quality-gates.md`](../development/testing-and-quality-gates.md) | `[PLANNED]` (proposed sequencing: after PR #1) |
 | Agent-identity rebrand (system prompt "You are Craft Agent" → NEXUS; co-author trailer) | [`../development/upstream-sync.md`](../development/upstream-sync.md) §Cosmetic | `[PLANNED]` — deliberately excluded from PR #1 |
-| UI copy rebrand (~20+ descriptive "Craft Agents" strings × 6 locales) | same | `[PLANNED]` — deferred by D-007 |
+| UI copy rebrand (~20+ descriptive "Craft Agents" strings × 6 locales) | same | `[PLANNED]` — deferred by D-007 (one bounded carve-out: the "Craft Agents Backend" picker label is replaced in Phase 1 PR-1D, D-021) |
 | Craft-hosted service decoupling (docs MCP, OAuth relay, session sharing, `agents.craft.do`) | same §Technically significant | `[DECIDED]` direction (D-005, D-006: keep for now; docs MCP becomes optional/off later); execution `[PLANNED]` |
 | Security hardening (credential key model, env-strip allowlist, token compare, TLS enforcement) | [`../architecture/craft-baseline.md`](../architecture/craft-baseline.md) §9 | `[DECIDED]` as a later dedicated milestone (D-009); scope `[PLANNED]` |
 
@@ -61,20 +61,18 @@ These run alongside the product phases; each is one scoped concern.
 - [x] Produce the detailed Phase 1 implementation plan
       ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md), 2026-07-14)
 
-**Current milestone → Phase 1 implementation.** Blocked on owner sign-off of the Phase 1
-plan; the first implementation act is its S1 multi-Codex spike. PR #1 branding runs in
-parallel once artwork arrives.
+**Current milestone → Phase 1 implementation.** Signed off 2026-07-14 (D-020…D-023);
+execution delegated via the [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md);
+first implementation act is the S1 multi-Codex spike (owner performs the two OAuth logins).
+PR #1 branding runs in parallel once artwork arrives.
 
 ## Open questions `[OPEN]`
 
-1. **`develop` branch.** The master plan's recommended git structure includes `develop`;
-   create it now or defer until Phase 1 implementation starts?
-2. **PR #1 artwork + go-ahead** (carried over; D-008).
-3. **Phase 1 plan sign-off** + its three scoped questions (Copilot identity timing, picker
-   label rename timing, handoff wording) —
-   [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) §8.
+1. **PR #1 artwork + go-ahead** (carried over; D-008).
 
 **Resolved:** docs committed and pushed to the fork (2026-07-13, owner-authorized direct
 push to `origin/main`); upstream root `README.md` removed until the publish phase (D-019);
 Phase 1 plan path = `docs/plans/phase-1-multi-account-chat.md` (2026-07-14, settled by the
-owner's instruction to produce the plan).
+owner's instruction to produce the plan); **Phase 1 sign-off + its three §8 questions**
+(2026-07-14 → D-020 Copilot in scope, D-021 picker label replaced in PR-1D, D-022 wording
+confirmed); **`develop` branch** (2026-07-14 → created, D-023).

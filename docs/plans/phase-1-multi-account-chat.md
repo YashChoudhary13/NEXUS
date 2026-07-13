@@ -2,9 +2,11 @@
 
 **Objective:** make the existing Craft Agents chat experience work naturally with multiple
 Claude and Codex subscription identities.
-**Status:** `[PLANNED]` — **detailed implementation plan produced 2026-07-14** (closing the
-Phase 0 gate deliverable). Implementation has **not started**; awaiting owner review and
-go-ahead. All code references verified against baseline `4289b16` + fork docs commits.
+**Status:** `[DECIDED]` — **signed off by the owner 2026-07-14**; §8 questions answered
+(D-020…D-023), implementation authorized and delegated via the
+[Codex kickoff prompt](./phase-1-kickoff-prompt-codex.md). Implementation begins with the
+S1 spike; **no Phase 1 code has landed yet**. All code references verified against baseline
+`4289b16` + fork docs commits.
 
 > Path note: the master plan referenced `docs/superpowers/plans/…`; per the roadmap decision
 > this repo keeps phase plans here in `docs/plans/`.
@@ -44,6 +46,7 @@ state stays exactly the existing five `oauth*` fields + `name` — zero config m
 S1 spike (1 day)  →  PR-1A identity capture  →  PR-1B multi-account UX
                                               →  PR-1C duplicate detection   (after 1A)
                                               →  PR-1D account-aware picker  (parallel w/ 1C)
+                                              →  PR-1F Copilot identity      (after 1A, parallel w/ 1B–1D)
                                               →  PR-1E continue-with-another-agent (last)
 ```
 
@@ -82,8 +85,9 @@ connection identity fields, server-side.
   `updateLlmConnection(flow.connectionSlug, identityUpdates)` (guarded assignments exactly
   like `:163-174`). Also re-stamp on token refresh where the refresh path receives a new
   `id_token` (`packages/shared/src/auth/chatgpt-oauth.ts:151-207` consumers).
-- **Out of scope:** Copilot identity (GitHub user lookup) — recorded as a fast-follow
-  `[OPEN]`; Claude path untouched (already works).
+- **Out of scope for this PR:** Copilot identity — in Phase 1 per D-020, but as its own
+  package ([PR-1F](#pr-1f--copilot-identity-capture-d-020), different mechanism); Claude path
+  untouched (already works).
 
 **Tests:** unit tests for `decodeJwtClaims`/`parseChatGptIdentity` (fabricated JWTs: happy
 path, missing claims, garbage token → `undefined`, never-throws); handler-level test that
@@ -145,14 +149,35 @@ warning; two genuinely different accounts do not.
   imports of the helper) and the session-new flow so selecting account then model matches
   the master plan's interaction model (Provider / Account / Model / Effort — effort selector
   already exists as thinking-level).
-- Keep current group labels (incl. "Craft Agents Backend") — label rebranding belongs to the
-  UI-copy workstream, not Phase 1 (`[OPEN]` noted below).
+- **D-021:** the "Craft Agents Backend" group label does **not** survive this PR — the
+  account-tier rework replaces it (most plausibly dissolving into per-provider account groups;
+  exact replacement copy approved at PR-1D review) ×6 locales. Deliberate bounded carve-out
+  from the otherwise-deferred UI-copy workstream (D-007).
 
 **Tests:** helper unit tests (multi-account grouping, single-account unchanged rendering);
 `ipc-channels` and typecheck gates.
 **DoD:** with 1 Claude + 2 Codex connections, the picker shows three account entries under
 two providers, each with its own models; "a new session can choose any account/model
 combination".
+
+### PR-1F — Copilot identity capture (D-020)
+
+**Change:** populate the same connection identity fields for GitHub Copilot connections.
+
+- Mechanism differs from PR-1A: Copilot OAuth yields a GitHub token, not an identity JWT —
+  resolve identity via a GitHub user lookup (`/user`, plus org where available) at OAuth
+  completion. ⚠️ Exact token audience/scopes unverified — the PR starts with its own
+  mini-verification against a real Copilot login before code review. Fail-soft like the other
+  parsers: identity absent must never break login.
+- Same persistence path as PR-1A (`updateLlmConnection` guarded assignments); **no new stored
+  fields**. Re-stamp on token refresh where applicable.
+- Duplicate detection needs no extra work: PR-1C's family-scoped key already covers Copilot.
+
+**Tests:** lookup/parse unit tests with fabricated API responses (happy path, missing email,
+API error → `undefined`, never-throws); no live GitHub calls in CI.
+**DoD:** a Copilot connection row shows its GitHub identity on the `AiSettingsPage` identity
+line; duplicate Copilot logins are flagged by the PR-1C machinery.
+**Sequencing:** any time after PR-1A (parallel with 1B–1D); required before Phase 1 closes.
 
 ### PR-1E — "Continue with another agent" (linked handoff)
 
@@ -207,6 +232,7 @@ touched flow. Known inherited failures stay untouched
 | Picker refactor destabilizes session-new flow | Helper is pure + unit-tested; consumers changed mechanically; manual matrix |
 | Handoff context too thin/too heavy in v0 | Visible handoff note (user sees what transferred); iterate; durable packets come with Memory foundation |
 | Quota surprises (two connections, one account) | That's exactly what PR-1C warns about |
+| Copilot identity mechanism assumptions wrong (token audience/scopes) | PR-1F opens with its own mini-verification; parser fail-soft; scope contained to one PR |
 
 ## 7. Completion criteria (master plan — verbatim checklist)
 
@@ -218,12 +244,18 @@ touched flow. Known inherited failures stay untouched
 - [ ] An active task can continue through a linked handoff to another agent.
 - [ ] Restarting the app restores accounts and sessions correctly.
 - [ ] Credentials never cross connection boundaries. *(structural today — regression-guarded by slug-scoped credential tests)*
+- [ ] A Copilot connection shows its real GitHub identity. *(added by D-020)*
 
-## 8. Open questions for the owner `[OPEN]`
+## 8. Owner decisions `[DECIDED]` (questions resolved 2026-07-14)
 
-1. **Copilot identity** (GitHub login lookup) in Phase 1 or fast-follow? (Plan assumes
-   fast-follow.)
-2. Picker group label "Craft Agents Backend" — rename now (small copy change ×6 locales) or
-   with the UI-copy rebrand workstream? (Plan assumes defer.)
-3. PR-1E entry point naming: "Continue with another agent" (master plan) — confirm wording
-   for i18n.
+Answered at sign-off; recorded in the
+[decision log](../decisions/initial-product-decisions.md) §D:
+
+1. **Copilot identity → in Phase 1** as its own work package → PR-1F (**D-020**).
+2. **"Craft Agents Backend" picker label → replaced in PR-1D** (×6 locales); exact copy
+   approved at PR-1D review (**D-021**).
+3. **PR-1E wording confirmed: "Continue with another agent"** — i18n baseline (**D-022**).
+
+Also settled at sign-off: **git flow** — `develop` branch created 2026-07-14; feature
+branches cut from `develop`, PRs target `develop` on `origin`; `develop` → `main` at the
+phase gate (**D-023**).

@@ -1,7 +1,7 @@
 # Repository Strategy
 
-**Status:** facts `[UPSTREAM]`/verified; branch structure `[DECIDED]` (master plan), branches
-not yet created.
+**Status:** facts `[UPSTREAM]`/verified; branch structure `[DECIDED]` (master plan).
+`develop` created 2026-07-14 (D-023); feature branches are created as their work begins.
 
 ## Repository facts (verified 2026-07-13)
 
@@ -16,9 +16,10 @@ not yet created.
 We keep tracking upstream (D-002) and sync deliberately —
 [`upstream-sync.md`](./upstream-sync.md).
 
-## Branch structure `[DECIDED]`, creation pending
+## Branch structure `[DECIDED]`
 
-From the master plan (branches are created as their work begins, not pre-emptively):
+From the master plan (branches are created as their work begins, not pre-emptively).
+**`develop` exists as of 2026-07-14** (D-023) — cut feature branches from it:
 
 ```text
 main                         Stable NEXUS releases
@@ -34,12 +35,11 @@ feature/brain-ui             Notes and graph interface
 Plus the already-planned compliance branch: `feature/nexus-identity-and-packaging`
 ([PR #1](../plans/pr-01-identity-and-packaging.md)).
 
-`[OPEN]` Timing of `develop` creation — see
-[roadmap open questions](../product/roadmap.md#open-questions-open).
-
 ## Rules
 
 - **No direct commits to `main`** (D-010). Branch → PR → review.
+- **Feature PRs target `develop`** on `origin`; `develop` merges to `main` when a phase gate
+  passes (D-023). Never push to `upstream` (its push URL is disabled).
 - Upstream naming convention (`CONTRIBUTING.md`): `feature/…`, `fix/…`, `refactor/…`,
   `docs/…` — we keep it.
 - One concern per branch/PR (working agreement 6).

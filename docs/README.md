@@ -56,7 +56,7 @@ confuse aspiration with reality:
 | Doc | Purpose |
 |-----|---------|
 | [`decisions/README.md`](./decisions/README.md) | How decisions are recorded. |
-| [`decisions/initial-product-decisions.md`](./decisions/initial-product-decisions.md) | Confirmed decisions D-001 … D-018. |
+| [`decisions/initial-product-decisions.md`](./decisions/initial-product-decisions.md) | Confirmed decisions D-001 … D-023. |
 
 ### Development
 | Doc | Purpose |
@@ -76,9 +76,10 @@ confuse aspiration with reality:
 ### Plans
 | Doc | Purpose |
 |-----|---------|
-| [`plans/phase-0-foundation.md`](./plans/phase-0-foundation.md) | Foundation & repository stabilization (status: nearly complete). |
+| [`plans/phase-0-foundation.md`](./plans/phase-0-foundation.md) | Foundation & repository stabilization (✅ complete 2026-07-14). |
 | [`plans/pr-01-identity-and-packaging.md`](./plans/pr-01-identity-and-packaging.md) | Branding/compliance PR #1 (approved plan, awaiting artwork + go). |
-| [`plans/phase-1-multi-account-chat.md`](./plans/phase-1-multi-account-chat.md) | Multi-account Chat and safe handoffs. |
+| [`plans/phase-1-multi-account-chat.md`](./plans/phase-1-multi-account-chat.md) | Multi-account Chat and safe handoffs (signed off 2026-07-14; in implementation). |
+| [`plans/phase-1-kickoff-prompt-codex.md`](./plans/phase-1-kickoff-prompt-codex.md) | Verbatim cold-start prompt issued to the implementing agent for Phase 1. |
 | [`plans/memory-foundation.md`](./plans/memory-foundation.md) | Markdown vault + context packets milestone. |
 | [`plans/phase-2-swarm.md`](./plans/phase-2-swarm.md) | Swarm orchestration and visual workspace. |
 | [`plans/phase-3-brain.md`](./plans/phase-3-brain.md) | Brain UI, Obsidian workflows, knowledge graph. |
