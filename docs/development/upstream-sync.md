@@ -51,6 +51,12 @@ never incidental work.
 | Icons/logos | `apps/electron/resources/*`, `renderer/components/icons/Craft*.tsx` | PR #1 (artwork: D-008) |
 | Copyright/author/homepage metadata | `electron-builder.yml`, `apps/electron/package.json` | PR #1 |
 
+## Deliberate deletions
+
+- **Root `README.md`** — deleted in NEXUS (D-019) until the publish-phase NEXUS README is
+  written. Upstream merges will raise a modify/delete conflict whenever upstream edits it —
+  **resolve as deleted** (`git rm README.md` during the merge).
+
 ## High-conflict files (merge hot spots)
 
 See the full list with sizes in

@@ -5,7 +5,7 @@
 
 - **Last updated:** 2026-07-13
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `main`. Working tree: documentation work is **uncommitted** (see Blockers).
+- **Branch:** `main` (fork `origin/main` — docs committed & pushed 2026-07-13, owner-authorized).
 - **Phase:** Phase 0 (Foundation) nearly complete → preparing Phase 1 planning.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
@@ -32,13 +32,15 @@ modified** — all work so far is investigation, validation, planning, and docum
 - **2026-07-13:** master plan adopted; entire `docs/` system rebuilt to the canonical NEXUS
   structure (this documentation set). Root `AGENTS.md`/`CLAUDE.md` rewritten as thin shared
   bootstraps.
+- **2026-07-13:** docs committed and pushed directly to `origin/main` (owner-authorized
+  one-off exception to D-010; upstream untouched). Upstream root `README.md` removed until
+  the publish phase (D-019).
 
 ## Next up ⏭️ (in order)
 
 1. **Close out Phase 0** ([`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md)):
    - Interactive launch smoke-test of the unmodified app (`bun run electron:dev`) — builds
      pass, but a human-visible launch hasn't been performed yet.
-   - Owner: approve committing this documentation set (branch + PR per D-010).
 2. **Produce the detailed Phase 1 implementation plan** (multi-account chat foundation) —
    scope in [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
    The master plan calls this the gate before any feature work.
@@ -48,9 +50,6 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Blockers / owner input needed
 
-- ⏳ **Uncommitted docs:** this entire documentation system sits uncommitted in the working
-  tree on `main`. Needs owner go-ahead for a branch + commit (D-010 forbids direct `main`
-  commits).
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -67,6 +66,12 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-13 — README removal + first push to the fork.** Owner approved committing the
+  documentation set and instructed a direct push to their fork — pushed to `origin/main`
+  only (explicit one-off exception to D-010; `upstream` untouched). Removed the upstream
+  root `README.md` per D-019 (a NEXUS README will be written at the publish phase); updated
+  roadmap, phase-0 status, upstream notes, and the decision log accordingly. Future upstream
+  syncs will hit a modify/delete conflict on `README.md` — resolve as deleted.
 - **2026-07-13 — Docs system v2 (canonical NEXUS structure).** Adopted the master plan
   (Chat/Swarm/Brain) as authoritative; rebuilt `docs/` into the required structure
   (product/architecture/decisions/development/research/plans/upstream/agents); recorded

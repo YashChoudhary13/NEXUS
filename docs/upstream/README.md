@@ -31,7 +31,7 @@ Agent SDK dependency is subject to Anthropic's Commercial Terms of Service (see 
 
 | Location | Content |
 |----------|---------|
-| Root `README.md` | Upstream's full product/feature/setup documentation (still Craft-branded — see `[OPEN]` in the [roadmap](../product/roadmap.md)) |
+| Upstream root `README.md` | **Removed from this fork** (D-019) until the NEXUS publish phase — read it in the upstream repo or via `git show 4289b16:README.md` |
 | `packages/shared/CLAUDE.md` | **Deep, binding conventions** for the core package — read before editing `shared` |
 | `packages/core/CLAUDE.md` | Core-types package notes |
 | `apps/electron/resources/AGENTS.md` | How bundled resources sync to `~/.craft-agent/` on launch |

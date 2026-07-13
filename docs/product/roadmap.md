@@ -56,7 +56,7 @@ Goal: reach the point where Phase 1 implementation can begin safely.
 - [x] Record the upstream baseline commit (`4289b16`, v0.11.1 — [`../development/repository-strategy.md`](../development/repository-strategy.md))
 - [x] Create `docs/architecture/craft-baseline.md`
 - [x] Create `docs/research/repository-register.md`
-- [x] Establish branch and worktree conventions ([`../development/`](../development/repository-strategy.md)) — *written; commit pending owner go-ahead*
+- [x] Establish branch and worktree conventions ([`../development/`](../development/repository-strategy.md)) — committed 2026-07-13
 - [ ] Produce the detailed Phase 1 implementation plan
 
 ## Open questions `[OPEN]`
@@ -65,10 +65,9 @@ Goal: reach the point where Phase 1 implementation can begin safely.
    `docs/superpowers/plans/2026-07-13-multi-account-chat-foundation.md`; this repo
    standardizes on `docs/plans/`. Proposed: write the detailed plan at
    `docs/plans/phase-1-multi-account-chat.md` (extending the existing scope doc). Confirm.
-2. **Committing the docs.** Everything in `docs/` (+ root `AGENTS.md`/`CLAUDE.md`) is
-   uncommitted; D-010 forbids direct `main` commits. Approve a `docs/…` branch + PR?
-3. **Root `README.md`.** Still fully Craft-branded (upstream text). A one-line pointer to
-   `docs/README.md` requires owner permission (file is outside `docs/`).
-4. **`develop` branch.** The master plan's recommended git structure includes `develop`;
+2. **`develop` branch.** The master plan's recommended git structure includes `develop`;
    create it now or defer until Phase 1 implementation starts?
-5. **PR #1 artwork + go-ahead** (carried over; D-008).
+3. **PR #1 artwork + go-ahead** (carried over; D-008).
+
+**Resolved 2026-07-13:** docs committed and pushed to the fork (owner-authorized direct
+push to `origin/main`); upstream root `README.md` removed until the publish phase (D-019).

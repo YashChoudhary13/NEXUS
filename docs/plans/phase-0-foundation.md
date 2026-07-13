@@ -18,7 +18,7 @@ identify merge-conflict hot spots → establish branch/worktree/test/review/comm
 | Tests pass or all pre-existing failures are documented | ✅ | 108 shared tests pass; every failure categorized in [`../development/testing-and-quality-gates.md`](../development/testing-and-quality-gates.md) |
 | The exact baseline commit is recorded | ✅ | `4289b16` (v0.11.1) — [`../development/repository-strategy.md`](../development/repository-strategy.md) |
 | The architecture audit is reviewed | ✅ | [`../architecture/craft-baseline.md`](../architecture/craft-baseline.md); owner reviewed the audit report 2026-07-13 and approved strategy from it (D-001) |
-| Development conventions are committed | 🟡 **Written, not committed** | [`../development/`](../development/repository-strategy.md) docs exist; the whole docs set is uncommitted pending owner go-ahead (D-010 — see [project-state blockers](../agents/project-state.md)) |
+| Development conventions are committed | ✅ | [`../development/`](../development/repository-strategy.md) — committed to `main` on the fork 2026-07-13 (owner-authorized direct push) |
 | Apache-2.0 notices preserved | ✅ | `LICENSE`, `NOTICE`, `TRADEMARK.md`, `SECURITY.md` untouched ([`../upstream/README.md`](../upstream/README.md)) |
 | Merge-conflict hot spots identified | ✅ | [`craft-baseline.md`](../architecture/craft-baseline.md) §8 + [`upstream-sync.md`](../development/upstream-sync.md) |
 | `docs/research/repository-register.md` created | ✅ | [Register](../research/repository-register.md) (reference entries pending inspection) |
@@ -27,8 +27,7 @@ identify merge-conflict hot spots → establish branch/worktree/test/review/comm
 ## Remaining work to close Phase 0
 
 1. **Launch smoke-test** the unmodified app (`bun run electron:dev`), record the result here.
-2. **Owner:** approve a branch + commit for the documentation/conventions set (D-010).
-3. **Produce the detailed Phase 1 implementation plan** (see `[OPEN]` path question in the
+2. **Produce the detailed Phase 1 implementation plan** (see `[OPEN]` path question in the
    [roadmap](../product/roadmap.md#open-questions-open)).
 
 ## Related but separate: PR #1 (branding/compliance)

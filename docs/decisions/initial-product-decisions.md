@@ -1,11 +1,12 @@
-# Initial Product Decisions (D-001 … D-018)
+# Initial Product Decisions (D-001 … D-019)
 
-**Status:** all entries `[DECIDED]` · **Next free ID: D-019** · Conventions:
+**Status:** all entries `[DECIDED]` · **Next free ID: D-020** · Conventions:
 [`README.md`](./README.md).
 
-Two batches, both 2026-07-13: **A)** foundation/fork-strategy decisions from the owner's
-planning sessions; **B)** product-direction decisions adopted with the
-[master plan](../product/nexus-master-plan-2026-07-13.md).
+Batches, all 2026-07-13: **A)** foundation/fork-strategy decisions from the owner's planning
+sessions; **B)** product-direction decisions adopted with the
+[master plan](../product/nexus-master-plan-2026-07-13.md); **C)** post-adoption owner
+decisions.
 
 ---
 
@@ -99,3 +100,15 @@ Study multi-agent frameworks for patterns; prefer concepts and clean-room interf
 copying subsystems; copy code only with compatible license + documented attribution; isolate
 borrowed components behind NEXUS-owned interfaces; record everything in
 [`../research/repository-register.md`](../research/repository-register.md).
+
+---
+
+## C. Post-adoption decisions (2026-07-13, owner)
+
+### D-019 — Remove the upstream root `README.md` until the publish phase
+Delete the Craft-branded root `README.md` from the fork; a NEXUS README will be written in
+the final phase of the project, when it is published for others to use. The upstream text
+stays available via the upstream repo and git history (`git show 4289b16:README.md`).
+**Consequences:** the repo has no root README until publish; future upstream merges will
+surface modify/delete conflicts on `README.md` — resolve by keeping it deleted
+([`../development/upstream-sync.md`](../development/upstream-sync.md) §Deliberate deletions).
