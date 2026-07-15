@@ -217,6 +217,7 @@ CI-pinned Bun 1.3.10 first on `PATH`.
 | changed-file shared ESLint | 0 | ✅ 0 errors / 5 inherited broad-file warnings |
 | `git diff --check` | 0 | ✅ clean |
 | `NODE_OPTIONS=--max-old-space-size=8192 bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| isolated combined-app launch/render smoke | 0 | ✅ main + RPC initialization; all five onboarding provider choices rendered; no real credentials read |
 
 The full production build retains only the documented inherited missing-base-tsconfig and Vite
 chunk-size warnings. Real-provider acceptance is intentionally separate: this combined automated

@@ -115,7 +115,8 @@ owner matrix, and the open billing acceptance criterion remain.**
   PR-1D. The integrated candidate passes 120 account-identity tests, 23 multi-account UX,
   6 duplicate-account, 37 picker, 24 handoff, 10 sessions-atom, 492 complete renderer, and
   108 shared tests; all relevant typechecks, locale parity/sorting, changed-file lint, diff
-  hygiene, and the complete Electron production build also pass.
+  hygiene, the complete Electron production build, and an isolated combined-app onboarding
+  launch/render smoke also pass.
 
 ## Next up ⏭️ (in order)
 
@@ -162,8 +163,10 @@ owner matrix, and the open billing acceptance criterion remain.**
   41; 6 duplicate-account / 9; 37 picker / 46; 24 handoff / 1,660; 10 sessions-atom / 39;
   complete renderer 492 / 833; shared 108 / 227; all relevant package/Electron/UI typechecks;
   six translated locales at 1,664 keys; changed-file lint with zero errors; diff hygiene; and
-  the complete Electron production build. Phase 1 awaits review/retarget/merge, the owner
-  real-account matrix, and resolution of the billing criterion; `main` remains untouched.
+  the complete Electron production build. A fresh isolated combined-app launch then initialized
+  the main process/RPC server and rendered all five onboarding provider choices without touching
+  real credentials. Phase 1 awaits review/retarget/merge, the owner real-account matrix, and
+  resolution of the billing criterion; `main` remains untouched.
 - **2026-07-16 — GitHub publication resumed; PR-1B/1C/1D/1F opened as drafts.** Authenticated
   GitHub CLI is available. Commits `e55c9e5`, `5c017c7`, and `9ea7d0a` are draft PRs #2–#4
   against `develop`; Copilot commit `930d33f` is stacked draft #5 on PR-1A for a clean review.

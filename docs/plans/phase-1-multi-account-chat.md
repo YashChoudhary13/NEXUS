@@ -374,7 +374,9 @@ multi-account UX / 41; **6** duplicate-account / 9; **37** picker / 46; **24** h
 **10** sessions-atom / 39; the complete renderer suite **492** / 833; and shared **108** / 227.
 Core, shared, server-core, server, Electron, and UI typechecks pass; locale parity/sorting pass
 for six translated locales at 1,664 keys each; changed-file lint has zero errors; diff hygiene
-passes; and the complete Electron production build passes.
+passes; and the complete Electron production build passes. A fresh isolated combined-app smoke
+also initialized the main/RPC processes and rendered the onboarding choices for Claude, Codex,
+Copilot, other providers, and local models without reading real credentials.
 
 ### Final owner acceptance matrix `[PENDING]`
 
