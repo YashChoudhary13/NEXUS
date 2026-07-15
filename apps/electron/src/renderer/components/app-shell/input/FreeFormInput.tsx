@@ -87,7 +87,7 @@ import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
 import { CompactModelSelector } from './CompactModelSelector'
 import {
   formatTokenCount,
-  groupConnectionsByProvider,
+  groupConnectionsByProviderAccount,
   stripPiPrefixForDisplay,
 } from './model-picker-helpers'
 import { useModelVisionToggle } from './useModelVisionToggle'
@@ -392,10 +392,9 @@ export function FreeFormInput({
     return model.name ?? stripPiPrefixForDisplay(model.id)
   }, [availableModels, currentModel, connectionDefaultModel])
 
-  // Group connections by provider type for hierarchical dropdown.
-  // Each provider (Anthropic, Pi) can have multiple connections (API Key, OAuth, etc.)
+  // Build the Provider → Account/connection hierarchy for the model picker.
   const connectionsByProvider = React.useMemo(
-    () => groupConnectionsByProvider(llmConnections),
+    () => groupConnectionsByProviderAccount(llmConnections),
     [llmConnections],
   )
 
@@ -2127,13 +2126,13 @@ export function FreeFormInput({
                 })()
               ) : pickerMode === 'switcher' ? (
                 /* Hierarchical view: Provider → Connection → Models (empty session with multiple connections — lets the user switch BEFORE the first message locks the connection) */
-                connectionsByProvider.map(([providerName, connections], index) => (
-                  <React.Fragment key={providerName}>
+                connectionsByProvider.map((providerGroup, index) => (
+                  <React.Fragment key={providerGroup.id}>
                     {/* Provider group label */}
                     <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide select-none">
-                      {providerName}
+                      {providerGroup.labelKey ? t(providerGroup.labelKey) : providerGroup.label}
                     </div>
-                    {connections.map((conn) => {
+                    {providerGroup.accounts.map(({ connection: conn, identityLine }) => {
                       const isCurrentConnection = effectiveConnection === conn.slug
                       const isAuthenticated = conn.isAuthenticated
                       return (
@@ -2151,6 +2150,11 @@ export function FreeFormInput({
                                 {conn.name}
                                 {isCurrentConnection && <Check className="h-3 w-3 text-foreground" />}
                               </div>
+                              {identityLine && (
+                                <div className="text-xs text-muted-foreground truncate">
+                                  {identityLine}
+                                </div>
+                              )}
                               {!isAuthenticated && (
                                 <div className="text-xs text-muted-foreground">{t('settings.ai.notAuthenticated')}</div>
                               )}

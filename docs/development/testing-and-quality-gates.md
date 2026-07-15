@@ -66,6 +66,38 @@ workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-wor
 Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
 behavior — documented, not fixed; candidate note for the repo-health workstream.)
 
+## Phase 1 PR-1D validation (2026-07-15)
+
+`feature/account-aware-picker` was tested from its isolated worktree with the exact Bun
+1.3.10 binary and a dependency proxy whose `@craft-agent/*` links resolve back into that
+worktree.
+
+| Gate | Result |
+|------|--------|
+| `bun run test:account-aware-picker` | ✅ 33 pass / 0 fail |
+| `bun test apps/electron/src/renderer` | ✅ 473 pass / 0 fail / 804 assertions |
+| `bun run test:shared:all` | ✅ 108 pass / 0 fail |
+| `bun run typecheck:electron` | ✅ |
+| `bun run typecheck:shared` | ✅ |
+| i18n parity + sorted | ✅ 6 translated locales + English, 1,645 keys each |
+| ESLint on the four changed Electron files | ✅ 0 errors; 16 inherited hook warnings |
+| main/preload/toolbar/interceptor/renderer bundles + asset copy | ✅ |
+| built desktop app, isolated synthetic profile | ✅ Provider → Account → Model hierarchy and exact connection/model persistence |
+
+The Vite renderer needed `NODE_OPTIONS=--max-old-space-size=8192` after the host Node process
+hit its default 2 GB heap while rendering chunks; the retry completed normally. The full
+Electron `build` wrapper remains non-green because its first step finds nine inherited lint
+errors in untouched files. The wrapper's final `build:validate` step also references the
+missing stripped-OSS file `apps/electron/scripts/validate-assets.ts`. Direct compilation and
+asset-copy stages were run so those baseline blockers could not hide a PR-1D build defect.
+
+The UI smoke used both `HOME` and `CRAFT_CONFIG_DIR` under `/tmp`, an explicit scratch
+workspace root, and an isolated Electron `--user-data-dir`; it did not read or alter real
+credentials. One synthetic Claude account and two synthetic Codex accounts rendered under
+two provider headings with distinct email/organization identity lines. Selecting Codex
+Reviewer → GPT-5.4 mini before any send wrote `llmConnection: chatgpt-plus-2` and
+`model: pi/gpt-5.4-mini` to the scratch session.
+
 ## Failure categories explained
 
 - **Stripped OSS files** (not code defects): `tsconfig.base.json` is missing — four tsconfigs

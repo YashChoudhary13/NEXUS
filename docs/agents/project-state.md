@@ -3,23 +3,26 @@
 > **The single most important file for an agent starting cold.** Keep it truthful and current.
 > Update after every task (ritual in [`README.md`](./README.md)).
 
-- **Last updated:** 2026-07-14
+- **Last updated:** 2026-07-15
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `main` (fork `origin/main`). `upstream` push URL is **DISABLED** (safety).
+- **Integration branch:** `develop`; feature branches target `develop` (D-023). `main` remains
+  untouched. `upstream` push URL is **DISABLED** (safety).
 - **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 SIGNED OFF 2026-07-14 (D-020…D-023) —
-  implementation authorized**, delegated via the
-  [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); first act = S1 spike.
+  implementation in progress.** S1 and PR-1A are complete; PR-1B, PR-1C, and PR-1D are
+  implemented and verified locally; PR-1F and PR-1E remain.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
 
 ## Where we are right now
 
-The master product plan (**NEXUS = Chat + Swarm + Brain**) was adopted 2026-07-13 —
-canonical snapshot at
+Phase 1 is actively being built in isolated worktrees. The two-account Codex spike passed,
+including separate chats. PR-1A is published as
+[`#1`](https://github.com/YashChoudhary13/NEXUS/pull/1). PR-1B, PR-1C, and PR-1D are locally
+complete with focused tests, regression suites, production builds, and desktop smokes, but
+are deliberately uncommitted because the required GitHub CLI publish workflow cannot run
+until `gh` is installed and authenticated. The canonical product plan remains
 [`../product/nexus-master-plan-2026-07-13.md`](../product/nexus-master-plan-2026-07-13.md).
-Phase 0 (fork, run, audit, document) is nearly done. **No product source code has been
-modified** — all work so far is investigation, validation, planning, and documentation.
 
 ## Done ✅
 
@@ -41,22 +44,41 @@ modified** — all work so far is investigation, validation, planning, and docum
   closed, `CRAFT_CONFIG_DIR` caveat documented); **detailed Phase 1 implementation plan
   produced** → [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
   **Phase 0 = COMPLETE.**
+- **2026-07-15:** S1 two-Codex spike completed; both accounts produced independent chats.
+  PR-1A identity capture is implemented, verified, pushed, and open as PR #1.
+- **2026-07-15:** PR-1B multi-account UX is locally complete in
+  `feature/multi-account-ux`: explicit add-another-account flow, gap-safe slug allocation,
+  exact-slug re-authentication, seven-locale copy, 22 focused tests / 40 assertions, renderer
+  and shared regression suites, typechecks, production build, and built-app menu smoke pass.
+- **2026-07-15:** PR-1C duplicate detection is locally complete in
+  `feature/duplicate-account-detection`: provider-family-scoped UUID/email matching,
+  persistent warning badge, fail-soft post-save warning, six focused tests / nine assertions,
+  full regression/typecheck/build gates, and isolated built-app duplicate-row smoke pass.
+- **2026-07-15:** PR-1D account-aware picker is locally complete in
+  `feature/account-aware-picker`: Provider → Account → Model hierarchy in both consumers,
+  real identity sublines, provider-family labels replacing the picker backend label, seven
+  locales, 33 focused tests / 42 assertions, 473 renderer tests / 804 assertions, 108 shared
+  tests, typechecks, production compilation, and an isolated built-app selection/persistence
+  smoke pass.
 
 ## Next up ⏭️ (in order)
 
-1. **Phase 1 implementation (delegated to Codex,
-   [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md))**: **S1 spike first** (verify
-   two simultaneous Codex logins end-to-end; the owner performs the real OAuth logins), record
-   claim findings in the plan, then PR-1A → 1B → 1C/1D/1F → 1E per
-   [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
-   Branches off `develop`, PRs → `develop` (D-023).
-2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
+1. **PR-1F Copilot identity capture** — begin with the planned real-login/API-response
+   mini-verification, then implement the fail-soft lookup and focused tests.
+2. **PR-1E Continue with another agent** — implement last, reusing PR-1D's picker model.
+3. **Phase gate** — merge reviewable feature PRs to `develop`, run the final combined
+   regression/user matrix, verify restart isolation, and only then propose `develop → main`.
+4. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
    explicit go-ahead. Runs on its own branch, parallel to Phase 1.
-3. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
+5. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
 
 ## Blockers / owner input needed
 
-- ⏳ **S1 spike logins** — needs the owner interactively (two real ChatGPT/Codex accounts).
+- ⏳ **GitHub publication for PR-1B/1C/1D** — `gh` is not installed. Install with
+  `brew install gh`, then authenticate with `gh auth login`; until then those worktrees stay
+  uncommitted so the required publish workflow is not bypassed.
+- ⏳ **PR-1F real Copilot login verification** — requires the owner interactively when the
+  implementation reaches its provider-response check.
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -64,6 +86,9 @@ modified** — all work so far is investigation, validation, planning, and docum
 ## Fast facts
 
 - Runtime **Bun 1.3.10**; `bun install --frozen-lockfile` fails (stale lockfile — inherited).
+- Known baseline blockers remain: full Electron `build` stops on inherited repository-wide
+  lint debt; direct production bundle stages pass. `apps/electron/scripts/validate-assets.ts`
+  is absent from the OSS snapshot.
 - Storage is filesystem (JSONL sessions, JSON config, one AES-256-GCM credentials file). No SQL DB.
 - Two agent backends today `[UPSTREAM]`: Claude Agent SDK (`anthropic`) + Pi SDK (`pi`, ~20 providers).
 - Renderer ↔ logic is **WebSocket RPC**, not Electron IPC.
@@ -72,6 +97,15 @@ modified** — all work so far is investigation, validation, planning, and docum
 ---
 
 ## Changelog / handoff log (newest first — append, never rewrite)
+
+- **2026-07-15 — Phase 1 through PR-1D implemented and tested.** S1 passed with two live
+  Codex accounts/chats. PR-1A is open as #1. PR-1B/1C/1D are independently complete in their
+  feature worktrees with focused tests, regression suites, typechecks, locale gates,
+  production compilation, and isolated built-app smokes. PR-1D's smoke proved the two-tier
+  provider/account menu, account identity lines, per-account model submenus, and exact
+  pre-send persistence (`chatgpt-plus-2` + `pi/gpt-5.4-mini`). Publishing PR-1B/1C/1D is
+  paused because `gh` is missing; no staging/commit/push workaround was attempted. Next:
+  PR-1F, then PR-1E, then combined Phase 1 regression and owner sign-off.
 
 - **2026-07-14 — Phase 1 signed off; execution delegated to Codex.** Owner answered the plan's
   §8 questions → decisions **D-020** (Copilot identity in Phase 1 as new PR-1F), **D-021**
