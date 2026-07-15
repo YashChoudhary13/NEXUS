@@ -8,10 +8,11 @@ not complete**. §8 questions were answered (D-020…D-023), implementation was 
 S1 spike, which **passed its PR-1A engineering gate on 2026-07-14**. PR-1A is implemented and
 locally verified on `feature/account-identity` and open as
 [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge into `develop` is still pending.
-PR-1B, PR-1C, and PR-1D are draft PRs #2–#4; PR-1F is stacked draft #5 on PR-1A. PR-1E is
-implemented and locally verified and is being published as a clean stack on PR-1D. Final
-integrated regression, owner acceptance, review/merge, and the overall phase acceptance criterion
-for independently billed subscriptions remain `[OPEN]`. Baseline
+PR-1B, PR-1C, and PR-1D are draft PRs #2–#4; PR-1F is stacked draft #5 on PR-1A; and PR-1E
+is stacked draft #6 on PR-1D. A local `codex/phase-1-integration` candidate combines PRs #1–#6
+and passes the complete automated regression/build matrix. Final owner acceptance,
+review/retarget/merge, and the overall phase acceptance criterion for independently billed
+subscriptions remain `[OPEN]`. Baseline
 references were verified against `4289b16`.
 
 > Path note: the master plan referenced `docs/superpowers/plans/…`; per the roadmap decision
@@ -247,8 +248,8 @@ warning; two genuinely different accounts do not.
 
 ### PR-1D — Account-aware model picker
 
-**Status (2026-07-15):** `[IMPLEMENTED LOCALLY]` on `feature/account-aware-picker`; publication
-is paused because the required GitHub CLI is not installed/authenticated.
+**Status (2026-07-16):** `[PUBLISHED]` as draft
+[PR #4](https://github.com/YashChoudhary13/NEXUS/pull/4) against `develop`.
 
 **Change:** picker hierarchy provider → **account** → models.
 
@@ -291,13 +292,13 @@ PR-1D.
 
 ### PR-1F — Copilot identity capture (D-020)
 
-**Implementation status (2026-07-15):** `[IMPLEMENTED LOCALLY]` on
-`feature/copilot-identity`, stacked on PR-1A pending its merge. The Pi SDK mini-verification
+**Implementation status (2026-07-16):** `[PUBLISHED]` as stacked draft
+[PR #5](https://github.com/YashChoudhary13/NEXUS/pull/5) on PR-1A pending its merge. The Pi SDK mini-verification
 confirmed `read:user`; the implementation uses `/user` plus the public
 `/users/{login}/orgs` endpoint, displays `@login` when the profile email is private, and does
 not broaden OAuth scopes. Focused tests, the wider account gate, relevant typechecks, full
-Electron build, and isolated built-app row smoke pass. Commit/push/PR remain blocked on the
-missing authenticated GitHub CLI.
+Electron build, and isolated built-app row smoke pass. Retarget the draft to `develop` after
+PR-1A lands.
 
 **Change:** populate the same connection identity fields for GitHub Copilot connections.
 
@@ -318,15 +319,14 @@ line; duplicate Copilot logins are flagged by the PR-1C machinery.
 
 ### PR-1E — "Continue with another agent" (linked handoff)
 
-**Implementation status (2026-07-15):** `[IMPLEMENTED LOCALLY]` on
-`feature/linked-handoff`, with the locally verified PR-1D picker temporarily applied as its
-dependency layer. The implementation uses a dedicated same-workspace RPC (classified
+**Implementation status (2026-07-16):** `[PUBLISHED]` as stacked draft
+[PR #6](https://github.com/YashChoudhary13/NEXUS/pull/6) on PR-1D. The implementation uses a
+dedicated same-workspace RPC (classified
 `REMOTE_ELIGIBLE`) because dispatch-fork does not provide the required durable link and
 rollback semantics. Focused tests, relevant typechecks, changed-file lint, locale gates, the
 complete Electron production build, and a credential-free built-app smoke pass. The smoke
 uncovered and verified repairs for a child-route lifecycle race and nested interactive header
-links. Commit/push/PR remain blocked on the missing authenticated GitHub CLI; rebase this slice
-onto PR-1D after PR-1D lands.
+links. Retarget the draft to `develop` after PR-1D lands.
 
 **Change:** session action that forks the current session to a chosen account/model with a
 compact handoff.
@@ -364,11 +364,22 @@ showed the summary, followed both link directions, and created two children from
 touched flow. Known inherited failures stay untouched
 ([`../development/testing-and-quality-gates.md`](../development/testing-and-quality-gates.md)).
 
+### Integrated candidate verification `[PASS]` (2026-07-16)
+
+The local `codex/phase-1-integration` branch combines PRs #1–#6 in dependency order. Its only
+source conflict was resolved semantically in `useOnboarding`: PR-1B's exact target slug and
+reauth flag are preserved while PR-1A's server-owned Claude identity path remains token-free in
+the renderer. Pinned Bun 1.3.10 results: **120** account-identity tests / 486 assertions; **23**
+multi-account UX / 41; **6** duplicate-account / 9; **37** picker / 46; **24** handoff / 1,660;
+**10** sessions-atom / 39; the complete renderer suite **492** / 833; and shared **108** / 227.
+Core, shared, server-core, server, Electron, and UI typechecks pass; locale parity/sorting pass
+for six translated locales at 1,664 keys each; changed-file lint has zero errors; diff hygiene
+passes; and the complete Electron production build passes.
+
 ### Final owner acceptance matrix `[PENDING]`
 
-Run this only after the slices are published, rebased onto their declared dependencies, and
-integrated into one `develop` candidate. Use real identities; never paste tokens into logs or
-screenshots.
+The slices are published and an equivalent local integration candidate is green. Run this with
+real identities before Phase 1 is declared complete; never paste tokens into logs or screenshots.
 
 - [ ] Authenticate one Claude subscription, two distinct Codex identities, and one Copilot
       identity; confirm each account row shows the expected provider-owned identity.

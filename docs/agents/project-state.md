@@ -5,9 +5,11 @@
 
 - **Last updated:** 2026-07-16
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `feature/linked-handoff` in an isolated worktree, stacked on the published PR-1D
-  commit because PR-1E consumes its account/model picker. The draft targets PR-1D for a clean
-  one-concern review and will be retargeted to `develop` after PR-1D lands. The
+- **Branch:** `feature/linked-handoff` in an isolated worktree, published as
+  [GitHub PR #6](https://github.com/YashChoudhary13/NEXUS/pull/6) and stacked on PR-1D because
+  PR-1E consumes its account/model picker. The draft targets PR-1D for a clean one-concern
+  review and must be retargeted to `develop` after PR-1D lands. A complete local integration
+  candidate exists on `codex/phase-1-integration`. The
   preceding `spike/s1-multi-codex` branch remains throwaway and will never be merged.
   `upstream` push URL is **DISABLED** (safety).
 - **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 plan signed off 2026-07-14 (D-020…D-023) —
@@ -20,8 +22,10 @@
   are published as draft PRs [#2](https://github.com/YashChoudhary13/NEXUS/pull/2),
   [#3](https://github.com/YashChoudhary13/NEXUS/pull/3), and
   [#4](https://github.com/YashChoudhary13/NEXUS/pull/4). PR-1F is published as stacked draft
-  [#5](https://github.com/YashChoudhary13/NEXUS/pull/5). PR-1E is locally verified and being
-  published as a clean stack on PR-1D.** Final integration and owner acceptance remain.
+  [#5](https://github.com/YashChoudhary13/NEXUS/pull/5), and PR-1E as stacked draft
+  [#6](https://github.com/YashChoudhary13/NEXUS/pull/6).** A semantic integration candidate
+  combining PRs #1–#6 passes the complete automated regression/build matrix. Owner acceptance,
+  review/retarget/merge, and the billing criterion remain before Phase 1 can close.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
@@ -37,9 +41,11 @@ connections/sessions passed. The observed users share one selected runtime works
 overall “two different subscriptions” billing criterion remains `[OPEN]` for the phase gate.
 **PR-1A provider-neutral identity capture is complete on its feature branch and open as
 [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) against `develop`. PR-1B,
-PR-1C, and PR-1D are draft PRs #2–#4; PR-1F is stacked draft #5. PR-1E is locally complete
-and regression-gated. The overall Phase 1 is not complete: PR-1E publication, integrated
-regression/review/merge, the final user matrix, and the open billing acceptance criterion remain.**
+PR-1C, and PR-1D are draft PRs #2–#4; PR-1F and PR-1E are stacked drafts #5 and #6. A local
+`codex/phase-1-integration` candidate combines all six slices, including the one cross-slice
+OAuth-target reconciliation in `useOnboarding`, and passes the complete automated matrix.
+The overall Phase 1 is not formally complete: review/retarget/merge, the final real-account
+owner matrix, and the open billing acceptance criterion remain.**
 
 ## Done ✅
 
@@ -101,18 +107,29 @@ regression/review/merge, the final user matrix, and the open billing acceptance 
   real handoff through a localhost model stub, exposed and verified fixes for the child-route
   lifecycle race and nested interactive header links, and confirmed repeated continuations,
   automatic child navigation, visible context, and both directions of linked navigation.
+- **2026-07-16:** all implementation slices are published: PR-1A
+  [#1](https://github.com/YashChoudhary13/NEXUS/pull/1) targets `develop`; PR-1B/1C/1D are
+  drafts [#2](https://github.com/YashChoudhary13/NEXUS/pull/2)–[#4](https://github.com/YashChoudhary13/NEXUS/pull/4)
+  against `develop`; PR-1F [#5](https://github.com/YashChoudhary13/NEXUS/pull/5) is stacked
+  on PR-1A; and PR-1E [#6](https://github.com/YashChoudhary13/NEXUS/pull/6) is stacked on
+  PR-1D. The integrated candidate passes 120 account-identity tests, 23 multi-account UX,
+  6 duplicate-account, 37 picker, 24 handoff, 10 sessions-atom, 492 complete renderer, and
+  108 shared tests; all relevant typechecks, locale parity/sorting, changed-file lint, diff
+  hygiene, and the complete Electron production build also pass.
 
 ## Next up ⏭️ (in order)
 
-1. Publish PR-1E as a reviewable stack on PR-1D; retarget PR-1F/1E to `develop` after their
-   dependencies land.
-2. Assemble the complete Phase 1 integration candidate and rerun the regression matrix.
-3. **Run the final owner acceptance matrix** with real Claude, two real Codex identities,
+1. Review/merge PR-1A [#1](https://github.com/YashChoudhary13/NEXUS/pull/1), then retarget
+   stacked PR-1F [#5](https://github.com/YashChoudhary13/NEXUS/pull/5) to `develop`.
+2. Review/merge PR-1D [#4](https://github.com/YashChoudhary13/NEXUS/pull/4), then retarget
+   stacked PR-1E [#6](https://github.com/YashChoudhary13/NEXUS/pull/6) to `develop`.
+3. Review/merge the remaining Phase 1 PRs into `develop` (D-023), preserving one concern per PR.
+4. **Run the final owner acceptance matrix** with real Claude, two real Codex identities,
    and Copilot, including restart and linked-handoff coverage.
-4. Review/merge all Phase 1 PRs into `develop` (D-023).
-5. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
+5. Resolve or explicitly redefine the independently billed subscription acceptance criterion.
+6. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
    explicit go-ahead. Runs on its own branch, parallel to Phase 1.
-6. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
+7. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
 
 ## Blockers / owner input needed
 
@@ -135,6 +152,18 @@ regression/review/merge, the final user matrix, and the open billing acceptance 
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-16 — Phase 1 implementation published and combined candidate regression-gated.**
+  PR-1E commit `542b564` is stacked draft
+  [#6](https://github.com/YashChoudhary13/NEXUS/pull/6) on PR-1D. A local
+  `codex/phase-1-integration` candidate merged PRs #1–#6 in dependency order and resolved the
+  only source conflict semantically: the multi-account exact-slug/reauth target is combined
+  with PR-1A's server-owned Claude identity path without returning OAuth tokens to the renderer.
+  Pinned-Bun verification: 120 account-identity tests / 486 assertions; 23 multi-account UX /
+  41; 6 duplicate-account / 9; 37 picker / 46; 24 handoff / 1,660; 10 sessions-atom / 39;
+  complete renderer 492 / 833; shared 108 / 227; all relevant package/Electron/UI typechecks;
+  six translated locales at 1,664 keys; changed-file lint with zero errors; diff hygiene; and
+  the complete Electron production build. Phase 1 awaits review/retarget/merge, the owner
+  real-account matrix, and resolution of the billing criterion; `main` remains untouched.
 - **2026-07-16 — GitHub publication resumed; PR-1B/1C/1D/1F opened as drafts.** Authenticated
   GitHub CLI is available. Commits `e55c9e5`, `5c017c7`, and `9ea7d0a` are draft PRs #2–#4
   against `develop`; Copilot commit `930d33f` is stacked draft #5 on PR-1A for a clean review.

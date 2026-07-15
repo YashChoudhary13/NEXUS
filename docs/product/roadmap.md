@@ -22,7 +22,7 @@ Phase 3  →  Brain UI, Obsidian workflows, and Graphify graph
 | Phase | Plan | Status |
 |-------|------|--------|
 | **Phase 0 — Foundation & repository stabilization** | [`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md) | ✅ **Complete** (2026-07-14) |
-| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[IN PROGRESS]` — PR-1A open; PR-1B/1C/1D are draft PRs #2–#4; PR-1F is stacked draft #5; PR-1E is locally verified and being published. Integrated regression, final owner matrix, review/merge, and billing acceptance remain |
+| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[IN PROGRESS]` — all implementation slices are published as PRs #1–#6; a local combined candidate passes the complete automated regression/build matrix. Final owner matrix, review/retarget/merge, and billing acceptance remain |
 | **Memory foundation — shared project context** | [`../plans/memory-foundation.md`](../plans/memory-foundation.md) | `[PLANNED]` — after Phase 1, before Phase 2 |
 | **Phase 2 — Swarm & multi-agent orchestration** | [`../plans/phase-2-swarm.md`](../plans/phase-2-swarm.md) | `[PLANNED]` |
 | **Phase 3 — Brain, Obsidian & Graphify** | [`../plans/phase-3-brain.md`](../plans/phase-3-brain.md) | `[PLANNED]` |
@@ -61,10 +61,10 @@ These run alongside the product phases; each is one scoped concern.
 - [x] Produce the detailed Phase 1 implementation plan
       ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md), 2026-07-14)
 
-**Current milestone → publish and integrate Phase 1.** S1 and PR-1A passed; PR-1A is open,
-PR-1B/1C/1D are drafts #2–#4, PR-1F is stacked draft #5, and PR-1E is locally verified.
-Final stacked publication, integrated regression/user acceptance, review, merge, and the billing
-acceptance criterion remain.
+**Current milestone → accept and merge Phase 1.** S1 and PR-1A passed; all implementation
+slices are published as PRs #1–#6, and a semantic local integration candidate passes the full
+automated test/typecheck/lint/locale/production-build matrix. Final real-account owner acceptance,
+stack retargeting, review/merge, and the billing acceptance criterion remain.
 PR #1 branding runs in parallel once artwork arrives.
 
 ## Open questions `[OPEN]`

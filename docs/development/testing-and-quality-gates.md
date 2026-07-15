@@ -191,6 +191,38 @@ unrelated inherited files (`BackgroundFinishedChip`, `FabNewChat`, Kanban compon
 `ProjectInfoPage`). Changed-file lint has no errors. Locale coverage remains the documented
 stripped-OSS missing-script failure; parity and sorting pass.
 
+## Phase 1 integrated candidate verification (2026-07-16)
+
+The local `codex/phase-1-integration` candidate merged published PRs #1–#6 in dependency
+order. The only source conflict was repaired semantically in `useOnboarding`: PR-1B's exact
+target slug and reauthentication flag are combined with PR-1A's server-owned Claude identity
+flow, and no OAuth token is returned to or persisted by the renderer. All commands used the
+CI-pinned Bun 1.3.10 first on `PATH`.
+
+| Command / check | Exit | Result |
+|-----------------|------|--------|
+| `bun run test:account-identity` | 0 | ✅ 120 pass / 0 fail / 486 assertions across the main, isolated-cleanup, and exact-runtime stages |
+| `bun run test:multi-account-ux` | 0 | ✅ 23 pass / 0 fail / 41 assertions |
+| `bun run test:duplicate-accounts` | 0 | ✅ 6 pass / 0 fail / 9 assertions |
+| `bun run test:account-aware-picker` | 0 | ✅ 37 pass / 0 fail / 46 assertions |
+| `bun run test:linked-handoff` | 0 | ✅ 24 pass / 0 fail / 1,660 assertions |
+| sessions atom suite | 0 | ✅ 10 pass / 0 fail / 39 assertions |
+| complete Electron renderer test suite | 0 | ✅ 492 pass / 0 fail / 833 assertions across 52 files |
+| `bun run test:shared:all` | 0 | ✅ 108 pass / 0 fail / 227 assertions |
+| core/shared/server-core/server typechecks | 0 | ✅ clean |
+| Electron + UI typechecks | 0 | ✅ clean |
+| `bun run lint:i18n:parity` | 0 | ✅ 6 translated locales × 1,664 keys each match the English base |
+| `bun run lint:i18n:sorted` | 0 | ✅ clean |
+| changed-file Electron ESLint | 0 | ✅ 0 errors / 32 inherited broad-file hook warnings |
+| changed-file shared ESLint | 0 | ✅ 0 errors / 5 inherited broad-file warnings |
+| `git diff --check` | 0 | ✅ clean |
+| `NODE_OPTIONS=--max-old-space-size=8192 bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+
+The full production build retains only the documented inherited missing-base-tsconfig and Vite
+chunk-size warnings. Real-provider acceptance is intentionally separate: this combined automated
+gate does not assert billing ownership or use live credentials. The final owner matrix in the
+Phase 1 plan remains required before the phase is formally closed.
+
 ## Phase 1 PR-1D validation (2026-07-15)
 
 `feature/account-aware-picker` was tested from its isolated worktree with the exact Bun
