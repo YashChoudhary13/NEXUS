@@ -833,6 +833,7 @@
   "settings.about.title": "关于",
   "settings.about.updateReady": "更新就绪",
   "settings.about.version": "版本",
+  "settings.ai.addAnotherAccount": "添加另一个账户",
   "settings.ai.addConnection": "+ 添加连接",
   "settings.ai.connection": "连接",
   "settings.ai.connectionDesc": "新聊天的 API 连接",

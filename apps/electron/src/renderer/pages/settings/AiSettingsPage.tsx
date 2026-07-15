@@ -16,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
-import { X, MoreHorizontal, Pencil, Trash2, Star, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle, RefreshCcw, Settings2, MessageSquareMore, Zap, Clock, Check } from 'lucide-react'
+import { X, MoreHorizontal, Pencil, Trash2, Star, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle, RefreshCcw, Settings2, MessageSquareMore, Zap, Clock, Check, UserPlus } from 'lucide-react'
 import type { CredentialHealthStatus, CredentialHealthIssue } from '../../../shared/types'
 import { Spinner, FullscreenOverlayBase, Tooltip, TooltipTrigger, TooltipContent } from '@craft-agent/ui'
 import { useSetAtom } from 'jotai'
@@ -47,7 +47,7 @@ import {
   SettingsMenuSelectRow,
   SettingsToggle,
 } from '@/components/settings'
-import { useOnboarding } from '@/hooks/useOnboarding'
+import { getOAuthSetupMethodForConnection, useOnboarding } from '@/hooks/useOnboarding'
 import { useWorkspaceIcon } from '@/hooks/useWorkspaceIcon'
 import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
 import { RenameDialog } from '@/components/ui/rename-dialog'
@@ -192,6 +192,7 @@ interface ConnectionRowProps {
   onSetDefault: () => void
   onValidate: () => void
   onReauthenticate: () => void
+  onAddAnotherAccount?: () => void
   onEdit: () => void
   onSetMidStreamBehavior: (behavior: MidStreamBehavior) => void
   validationState: ValidationState
@@ -200,7 +201,7 @@ interface ConnectionRowProps {
   isDuplicateAccount?: boolean
 }
 
-function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, onSetDefault, onValidate, onReauthenticate, onEdit, onSetMidStreamBehavior, validationState, validationError, isDuplicateAccount }: ConnectionRowProps) {
+function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, onSetDefault, onValidate, onReauthenticate, onAddAnotherAccount, onEdit, onSetMidStreamBehavior, validationState, validationError, isDuplicateAccount }: ConnectionRowProps) {
   const { t } = useTranslation()
   const [menuOpen, setMenuOpen] = useState(false)
   const [piBaseUrl, setPiBaseUrl] = useState<string | undefined>(undefined)
@@ -339,10 +340,18 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
             </StyledDropdownMenuItem>
           )}
           {connection.authType === 'oauth' ? (
-            <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onReauthenticate)}>
-              <RefreshCcw className="h-3.5 w-3.5" />
-              <span>{t("settings.ai.reAuthenticate")}</span>
-            </StyledDropdownMenuItem>
+            <>
+              <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onReauthenticate)}>
+                <RefreshCcw className="h-3.5 w-3.5" />
+                <span>{t("settings.ai.reAuthenticate")}</span>
+              </StyledDropdownMenuItem>
+              {onAddAnotherAccount && (
+                <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onAddAnotherAccount)}>
+                  <UserPlus className="h-3.5 w-3.5" />
+                  <span>{t("settings.ai.addAnotherAccount")}</span>
+                </StyledDropdownMenuItem>
+              )}
+            </>
           ) : (
             <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onEdit)}>
               <Settings2 className="h-3.5 w-3.5" />
@@ -804,15 +813,22 @@ export default function AiSettingsPage() {
   }, [renamingConnection, renameValue, refreshLlmConnections])
 
   const handleReauthenticateConnection = useCallback((connection: LlmConnectionWithStatus) => {
+    const method = getOAuthSetupMethodForConnection(connection)
+    if (!method) return
+
     openApiSetup(connection.slug)
     apiSetupOnboarding.reset()
+    apiSetupOnboarding.handleStartOAuth(method, connection.slug)
+  }, [apiSetupOnboarding, openApiSetup])
 
-    if (connection.authType === 'oauth') {
-      const method = connection.providerType === 'pi'
-                   ? (connection.piAuthProvider === 'github-copilot' ? 'pi_copilot_oauth' : 'pi_chatgpt_oauth')
-                   : 'claude_oauth'
-      apiSetupOnboarding.handleStartOAuth(method, connection.slug)
-    }
+  const handleAddAnotherAccount = useCallback((connection: LlmConnectionWithStatus) => {
+    const method = getOAuthSetupMethodForConnection(connection)
+    if (!method) return
+
+    openApiSetup()
+    apiSetupOnboarding.reset()
+    // Explicit null means "new row" even before editingConnectionSlug re-renders.
+    apiSetupOnboarding.handleStartOAuth(method, null)
   }, [apiSetupOnboarding, openApiSetup])
 
   const handleEditConnection = useCallback(async (connection: LlmConnectionWithStatus) => {
@@ -1131,6 +1147,9 @@ export default function AiSettingsPage() {
                         onSetDefault={() => handleSetDefaultConnection(conn.slug)}
                         onValidate={() => handleValidateConnection(conn.slug)}
                         onReauthenticate={() => handleReauthenticateConnection(conn)}
+                        onAddAnotherAccount={getOAuthSetupMethodForConnection(conn)
+                          ? () => handleAddAnotherAccount(conn)
+                          : undefined}
                         onEdit={() => handleEditConnection(conn)}
                         onSetMidStreamBehavior={(behavior) => handleSetMidStreamBehavior(conn, behavior)}
                         validationState={validationStates[conn.slug]?.state || 'idle'}

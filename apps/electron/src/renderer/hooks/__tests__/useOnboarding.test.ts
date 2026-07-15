@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'bun:test'
 import {
   resolveSlugForMethod,
+  resolveOAuthConnectionTarget,
+  getOAuthSetupMethodForConnection,
   apiSetupMethodToConnectionSetup,
   BASE_SLUG_FOR_METHOD,
 } from '../useOnboarding'
@@ -31,6 +33,33 @@ describe('resolveSlugForMethod', () => {
     expect(slug).toBe('anthropic-api-3')
   })
 
+  it('fills the first numeric gap after a deleted connection', () => {
+    const slug = resolveSlugForMethod(
+      'pi_chatgpt_oauth',
+      null,
+      new Set(['chatgpt-plus', 'chatgpt-plus-2', 'chatgpt-plus-4']),
+    )
+    expect(slug).toBe('chatgpt-plus-3')
+  })
+
+  it('reuses the base slug when the base row was deleted', () => {
+    const slug = resolveSlugForMethod(
+      'pi_chatgpt_oauth',
+      null,
+      new Set(['chatgpt-plus-2', 'chatgpt-plus-3']),
+    )
+    expect(slug).toBe('chatgpt-plus')
+  })
+
+  it('continues past double-digit suffixes', () => {
+    const existingSlugs = new Set([
+      'github-copilot',
+      ...Array.from({ length: 9 }, (_, index) => `github-copilot-${index + 2}`),
+    ])
+    expect(resolveSlugForMethod('pi_copilot_oauth', null, existingSlugs))
+      .toBe('github-copilot-11')
+  })
+
   it('works for all setup methods', () => {
     const methods: ApiSetupMethod[] = [
       'anthropic_api_key', 'claude_oauth',
@@ -40,6 +69,57 @@ describe('resolveSlugForMethod', () => {
       const slug = resolveSlugForMethod(method, null, new Set())
       expect(slug).toBe(BASE_SLUG_FOR_METHOD[method])
     }
+  })
+})
+
+describe('OAuth account action resolution', () => {
+  it('forces a new slug when add-account races with a stale edit target', () => {
+    expect(resolveOAuthConnectionTarget(
+      'pi_chatgpt_oauth',
+      'chatgpt-plus',
+      new Set(['chatgpt-plus']),
+      null,
+    )).toEqual({ slug: 'chatgpt-plus-2', updateOnly: false })
+  })
+
+  it('keeps an explicit slug update-only for reauthentication', () => {
+    expect(resolveOAuthConnectionTarget(
+      'pi_chatgpt_oauth',
+      null,
+      new Set(['chatgpt-plus', 'chatgpt-plus-2']),
+      'chatgpt-plus-2',
+    )).toEqual({ slug: 'chatgpt-plus-2', updateOnly: true })
+  })
+
+  it('maps only supported OAuth connection families to setup methods', () => {
+    const base = { authType: 'oauth' as const, type: 'anthropic' as const }
+    expect(getOAuthSetupMethodForConnection({
+      ...base,
+      providerType: 'anthropic',
+    })).toBe('claude_oauth')
+    expect(getOAuthSetupMethodForConnection({
+      ...base,
+      type: 'openai',
+      providerType: 'pi',
+      piAuthProvider: 'openai-codex',
+    })).toBe('pi_chatgpt_oauth')
+    expect(getOAuthSetupMethodForConnection({
+      ...base,
+      type: 'openai',
+      providerType: 'pi',
+      piAuthProvider: 'github-copilot',
+    })).toBe('pi_copilot_oauth')
+    expect(getOAuthSetupMethodForConnection({
+      ...base,
+      type: 'openai',
+      providerType: 'pi',
+      piAuthProvider: 'openai',
+    })).toBeNull()
+    expect(getOAuthSetupMethodForConnection({
+      ...base,
+      authType: 'api_key',
+      providerType: 'anthropic',
+    })).toBeNull()
   })
 })
 

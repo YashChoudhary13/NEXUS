@@ -3,12 +3,15 @@
 > **The single most important file for an agent starting cold.** Keep it truthful and current.
 > Update after every task (ritual in [`README.md`](./README.md)).
 
-- **Last updated:** 2026-07-14
+- **Last updated:** 2026-07-15
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `main` (fork `origin/main`). `upstream` push URL is **DISABLED** (safety).
-- **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 SIGNED OFF 2026-07-14 (D-020…D-023) —
-  implementation authorized**, delegated via the
-  [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); first act = S1 spike.
+- **Branch:** `feature/multi-account-ux` in an isolated worktree, cut from `develop`;
+  `upstream` push URL is **DISABLED** (safety).
+- **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 implementation in progress, not complete.**
+  S1 passed its engineering gate; PR-1A is implemented, review-repaired, verified, and open
+  as [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1). PR-1B is implemented
+  and verified on this branch; publication/merge is pending. PR-1C, PR-1D, PR-1F, and PR-1E
+  remain.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
@@ -18,8 +21,12 @@
 The master product plan (**NEXUS = Chat + Swarm + Brain**) was adopted 2026-07-13 —
 canonical snapshot at
 [`../product/nexus-master-plan-2026-07-13.md`](../product/nexus-master-plan-2026-07-13.md).
-Phase 0 (fork, run, audit, document) is nearly done. **No product source code has been
-modified** — all work so far is investigation, validation, planning, and documentation.
+Phase 0 is complete. S1 proved two simultaneous slug-scoped Codex logins, chats, and restart
+restoration, with the independently billed-subscription wording still `[OPEN]`. PR-1A adds
+provider-neutral OAuth identity and hardened credential lifecycle behavior. PR-1B adds an
+explicit, provider-safe **Add another account** action while preserving Rename and
+Re-authenticate. Both slices are implemented and locally verified; neither has merged to
+`develop`, so the overall Phase 1 remains incomplete.
 
 ## Done ✅
 
@@ -41,13 +48,23 @@ modified** — all work so far is investigation, validation, planning, and docum
   closed, `CRAFT_CONFIG_DIR` caveat documented); **detailed Phase 1 implementation plan
   produced** → [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
   **Phase 0 = COMPLETE.**
+- **2026-07-15:** PR-1A implemented and review-repaired on `feature/account-identity`; scoped
+  identity/credential/race regressions, full shared tests, relevant typechecks, and the full
+  Electron build pass. [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1)
+  targets `develop`.
+- **2026-07-15:** PR-1B implemented on `feature/multi-account-ux`: the connection-row menu
+  exposes an explicit Add another account action for Claude, ChatGPT, and Copilot OAuth;
+  exact flow targets are fenced against stale edit state; first-free suffix allocation handles
+  gaps, deletions, and double-digit accounts; unsupported Pi OAuth providers fail closed.
+  Verification: focused **22 pass / 40 assertions**, renderer **476 pass / 810 assertions**,
+  shared **108 pass**, shared/Electron typechecks, i18n parity+sorting (**1,640 keys per
+  locale**), changed-file lint (0 errors; 3 inherited warnings), and the full Electron build.
+  Built-app smoke verified Rename, Re-authenticate, and Add another account render together
+  without invoking the new-account action.
 
 ## Next up ⏭️ (in order)
 
-1. **Phase 1 implementation (delegated to Codex,
-   [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md))**: **S1 spike first** (verify
-   two simultaneous Codex logins end-to-end; the owner performs the real OAuth logins), record
-   claim findings in the plan, then PR-1A → 1B → 1C/1D/1F → 1E per
+1. Publish/review PR-1B, then implement PR-1C → PR-1D → PR-1F → PR-1E per
    [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
    Branches off `develop`, PRs → `develop` (D-023).
 2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
@@ -56,7 +73,13 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Blockers / owner input needed
 
-- ⏳ **S1 spike logins** — needs the owner interactively (two real ChatGPT/Codex accounts).
+- ❓ **Phase 1 billing acceptance wording** — S1 proved two distinct user principals in one
+  selected runtime workspace, not two independently routed subscriptions. Resolve or rerun
+  this criterion before Phase 1 closes; it does not block the implementation slices.
+- ⚠️ **Local smoke profile cleanup is owner-controlled:** the PR-1B built-app smoke inherited
+  the default Craft profile; onboarding resumed and the already signed-in browser completed
+  one ChatGPT OAuth connection in `~/.craft-agent`. No secret was printed and the second-account
+  action was not invoked. Do not delete that connection/credential without owner approval.
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -73,6 +96,20 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-15 — PR-1B implemented and fully regression-gated.** Added an explicit
+  provider-safe Add another account action, exact OAuth-flow target fencing, robust first-free
+  slug allocation, fail-closed provider mapping, and seven-locale copy. Pinned-Bun gates:
+  focused 22/40, renderer 476/810, shared 108, relevant typechecks, i18n parity/sorting,
+  changed-file lint, and complete Electron build all pass. Built-app accessibility smoke
+  confirmed the menu action beside Rename/Re-authenticate and did not launch the action.
+  The inherited default profile did resume one existing ChatGPT onboarding OAuth during
+  launch; its resulting local connection is intentionally left untouched pending owner input.
+- **2026-07-15 — PR-1A implemented, repaired after review, and open.**
+  [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) targets `develop`. The final
+  repair suite passes 98 focused tests / 427 assertions, full shared 3,017 pass / 12 skip /
+  0 fail / 5,715 assertions, relevant typechecks, changed-file lint, and the complete Electron
+  build. Four code-review comments are outdated after fixes; the retained two-phase runtime
+  invalidation is documented as an intentional race fence.
 - **2026-07-14 — Phase 1 signed off; execution delegated to Codex.** Owner answered the plan's
   §8 questions → decisions **D-020** (Copilot identity in Phase 1 as new PR-1F), **D-021**
   ("Craft Agents Backend" picker label replaced in PR-1D, ×6 locales), **D-022** (wording

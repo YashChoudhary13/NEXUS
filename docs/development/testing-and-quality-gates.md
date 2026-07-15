@@ -66,6 +66,28 @@ workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-wor
 Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
 behavior — documented, not fixed; candidate note for the repo-health workstream.)
 
+## Phase 1 PR-1B verification (2026-07-15)
+
+Pinned runtime: `/tmp/nexus-bun-1.3.10/bin/bun` (Bun 1.3.10).
+
+| Gate | Result |
+|------|--------|
+| `bun run test:multi-account-ux` | ✅ 22 pass / 40 assertions |
+| `bun test apps/electron/src/renderer` | ✅ 476 pass / 810 assertions |
+| `bun run test:shared:all` | ✅ 108 pass |
+| `bun run typecheck:electron` + `typecheck:shared` | ✅ clean |
+| locale parity + sorted | ✅ 6 translated locales, 1,640 keys each |
+| changed-file Electron eslint | ✅ 0 errors; 3 inherited hook warnings outside the PR-1B hunks |
+| `bun run electron:build` | ✅ main/preload/renderer/resources/assets; inherited missing-tsconfig and chunk warnings only |
+| built-app settings smoke | ✅ connection menu renders Rename, Re-authenticate, and Add another account; add flow not invoked |
+
+⚠️ The built-app smoke also reconfirmed the partial-isolation warning above. The default
+profile was used, onboarding resumed, and an already signed-in browser completed one ChatGPT
+OAuth connection in `~/.craft-agent` before settings inspection. No credential value was
+printed. The connection is left intact because removing it is destructive and requires owner
+approval. Future OAuth UI smoke should use an owner-approved disposable macOS/home profile,
+not `CRAFT_CONFIG_DIR` alone.
+
 ## Failure categories explained
 
 - **Stripped OSS files** (not code defects): `tsconfig.base.json` is missing — four tsconfigs
