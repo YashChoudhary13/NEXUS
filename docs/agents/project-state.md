@@ -11,7 +11,8 @@
 - **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 plan signed off 2026-07-14 (D-020…D-023) —
   implementation authorized, but the Phase 1 implementation is NOT complete**, delegated via the
   [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); S1 passed the PR-1A
-  engineering gate and **PR-1A is implemented + locally verified; review/merge is pending**.
+  engineering gate and **PR-1A is implemented + locally verified and open as
+  [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge is pending**.
   PR-1B through PR-1F remain unimplemented.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
@@ -26,9 +27,9 @@ Phase 0 is complete. Phase 1 S1 passed its PR-1A engineering gate: both OAuth lo
 built-in validations, per-principal chats, and clean-restart restoration of both slug-bound
 connections/sessions passed. The observed users share one selected runtime workspace, so the
 overall “two different subscriptions” billing criterion remains `[OPEN]` for the phase gate.
-**PR-1A provider-neutral identity capture is complete on its feature branch and ready for
-review/merge into `develop`. The overall Phase 1 is not complete; PR-1B through PR-1F and the
-open billing acceptance criterion remain.**
+**PR-1A provider-neutral identity capture is complete on its feature branch and open as
+[GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) against `develop`. The overall
+Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance criterion remain.**
 
 ## Done ✅
 
@@ -62,8 +63,8 @@ open billing acceptance criterion remain.**
 
 ## Next up ⏭️ (in order)
 
-1. **Review and merge PR-1A provider-neutral identity capture** from
-   `feature/account-identity` into `develop`; then continue PR-1B → 1C/1D/1F → 1E per
+1. **Review and merge [PR-1A provider-neutral identity capture](https://github.com/YashChoudhary13/NEXUS/pull/1)**
+   from `feature/account-identity` into `develop`; then continue PR-1B → 1C/1D/1F → 1E per
    [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
    Branches off `develop`, PRs → `develop` (D-023).
 2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
@@ -91,7 +92,8 @@ open billing acceptance criterion remain.**
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
-- **2026-07-15 — PR-1A implementation and local verification complete.** ChatGPT OAuth now
+- **2026-07-15 — PR-1A implemented, verified, pushed, and opened for review.**
+  [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) targets `develop`. ChatGPT OAuth now
   derives the human principal from provider JWT claims without confusing it with the runtime
   workspace; credentials and identity share one server-owned per-slug generation. Logout,
   delete, refresh, reauth, and runtime disposal are race-tested, encrypted-store writes are

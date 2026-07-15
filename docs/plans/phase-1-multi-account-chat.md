@@ -6,7 +6,8 @@ Claude and Codex subscription identities.
 not complete**. §8 questions were answered (D-020…D-023), implementation was authorized and delegated via the
 [Codex kickoff prompt](./phase-1-kickoff-prompt-codex.md). Implementation begins with the
 S1 spike, which **passed its PR-1A engineering gate on 2026-07-14**. PR-1A is implemented and
-locally verified on `feature/account-identity`; review/merge into `develop` is still pending.
+locally verified on `feature/account-identity` and open as
+[GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge into `develop` is still pending.
 PR-1B through PR-1F remain unimplemented, no Phase 1 feature branch has merged, and the overall
 phase acceptance criterion for independently billed subscriptions remains `[OPEN]`. Baseline
 references were verified against `4289b16`.
