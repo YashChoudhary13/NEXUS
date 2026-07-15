@@ -51,6 +51,9 @@ export const SESSION_PERSISTENT_FIELDS = [
   // Remote transfer handoff
   'transferredSessionSummary',
   'transferredSessionSummaryApplied',
+  // Linked same-workspace agent handoff
+  'continuedFromSessionId',
+  'continuedToSessionIds',
   // Automation origin
   'triggeredBy',
   // Project binding (workspace-scoped grouping)
@@ -206,6 +209,10 @@ export interface SessionConfig {
   transferredSessionSummary?: string;
   /** Whether the transferred-session summary has already been injected. */
   transferredSessionSummaryApplied?: boolean;
+  /** Parent session whose generated handoff starts this session. */
+  continuedFromSessionId?: string;
+  /** Sessions that were continued from this session (oldest to newest). */
+  continuedToSessionIds?: string[];
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
   /** Workspace-scoped project id this session belongs to (undefined = unbound). */
@@ -313,6 +320,10 @@ export interface SessionHeader {
   transferredSessionSummary?: string;
   /** Whether the transferred-session summary has already been injected. */
   transferredSessionSummaryApplied?: boolean;
+  /** Parent session whose generated handoff starts this session. */
+  continuedFromSessionId?: string;
+  /** Sessions that were continued from this session (oldest to newest). */
+  continuedToSessionIds?: string[];
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
   /** Workspace-scoped project id this session belongs to (undefined = unbound). */
@@ -411,6 +422,10 @@ export interface SessionMetadata {
   archivedAt?: number;
   /** Message ID that this session was branched from (hard context cutoff marker). */
   branchFromMessageId?: string;
+  /** Parent session whose generated handoff starts this session. */
+  continuedFromSessionId?: string;
+  /** Sessions that were continued from this session (oldest to newest). */
+  continuedToSessionIds?: string[];
   /** Workspace-scoped project id this session belongs to (undefined = unbound). */
   projectId?: string;
   /** Parent session id — when set, this session is a subtask of the parent (undefined = top-level task). */

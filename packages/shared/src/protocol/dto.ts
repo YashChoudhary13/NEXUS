@@ -103,6 +103,10 @@ export interface Session {
   supportsBranching?: boolean
   /** Workspace-scoped project id this session is bound to (undefined = unbound) */
   projectId?: string
+  /** Parent session whose generated handoff starts this session. */
+  continuedFromSessionId?: string
+  /** Sessions that were continued from this session (oldest to newest). */
+  continuedToSessionIds?: string[]
   /** Parent session id — when set, this session is a subtask of the parent (undefined = top-level task) */
   parentSessionId?: string
   /** Kanban board column id ('todo' | 'in-progress' | 'done'); independent of sessionStatus */
@@ -182,6 +186,18 @@ export interface RemoteSessionTransferPayload {
 
 export interface ImportRemoteSessionTransferResult {
   sessionId: string
+}
+
+/** Exact account/model target selected before a linked child session is created. */
+export interface ContinueWithAgentRequest {
+  llmConnection: string
+  model: string
+  thinkingLevel?: ThinkingLevel
+}
+
+export interface ContinueWithAgentResult {
+  sessionId: string
+  summary: string
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +424,14 @@ export type SessionEvent =
   | { type: 'name_changed'; sessionId: string; name?: string }
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
   | { type: 'session_status_changed'; sessionId: string; sessionStatus: SessionStatus }
-  | { type: 'session_metadata_changed'; sessionId: string; changes: Partial<Pick<Session, 'taskNodeCount' | 'kanbanColumn' | 'taskDraft' | 'taskSlug' | 'projectId'>> }
+  | {
+      type: 'session_metadata_changed'
+      sessionId: string
+      changes: Partial<Pick<Session, 'taskNodeCount' | 'kanbanColumn' | 'taskDraft' | 'taskSlug' | 'projectId'>> & {
+        continuedFromSessionId?: string | null
+        continuedToSessionIds?: string[] | null
+      }
+    }
   | { type: 'session_deleted'; sessionId: string }
   | { type: 'session_created'; sessionId: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }

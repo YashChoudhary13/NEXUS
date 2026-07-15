@@ -50,6 +50,12 @@ export interface ISessionManager {
     options?: CreateSessionOptions,
     internal?: { emitCreatedEvent?: boolean },
   ): Promise<Session>
+  /** Creates a linked same-workspace child bound to the selected account/model. */
+  continueSessionWithAgent(
+    sessionId: string,
+    workspaceId: string,
+    target: import('@craft-agent/shared/protocol').ContinueWithAgentRequest,
+  ): Promise<import('@craft-agent/shared/protocol').ContinueWithAgentResult>
   /** Resolved working directory of a live session (Tasks Conductor uses it so children inherit
    *  the orchestrator's cwd). */
   getSessionWorkingDirectory(sessionId: string): string | undefined

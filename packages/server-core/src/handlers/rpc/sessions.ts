@@ -127,6 +127,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.IMPORT,
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.sessions.CONTINUE_WITH_AGENT,
 ] as const
 
 export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -578,5 +579,13 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
     return sessionManager.importRemoteSessionTransfer(targetWorkspaceId, payload)
+  })
+
+  // Continue an existing session with another account/model in the same workspace.
+  server.handle(RPC_CHANNELS.sessions.CONTINUE_WITH_AGENT, async (ctx, sessionId: string, target: import('@craft-agent/shared/protocol').ContinueWithAgentRequest) => {
+    await sessionManager.waitForInit()
+    const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
+    if (!workspaceId) throw new Error('No workspace context')
+    return sessionManager.continueSessionWithAgent(sessionId, workspaceId, target)
   })
 }

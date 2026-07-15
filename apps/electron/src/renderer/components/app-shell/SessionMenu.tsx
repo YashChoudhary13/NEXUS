@@ -32,6 +32,7 @@ import {
   Send,
   FolderKanban,
   Check,
+  GitFork,
 } from 'lucide-react'
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getStateColor, getStateIcon, type SessionStatusId } from '@/config/session-status-config'
@@ -75,6 +76,8 @@ export interface SessionMenuProps {
   onSessionStatusChange: (state: SessionStatusId) => void
   onOpenInNewWindow: () => void
   onSendToWorkspace?: () => void
+  /** Open the linked account/model handoff dialog. */
+  onContinueWithAgent?: () => void
   onDelete: () => void
 }
 
@@ -96,6 +99,7 @@ export function SessionMenu({
   onSessionStatusChange,
   onOpenInNewWindow,
   onSendToWorkspace,
+  onContinueWithAgent,
   onDelete,
   hasRemoteWorkspaces,
   projects = [],
@@ -148,6 +152,13 @@ export function SessionMenu({
         <MenuItem onClick={onSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
           <span className="flex-1">{t("sessionMenu.sendToWorkspace")}</span>
+        </MenuItem>
+      )}
+
+      {onContinueWithAgent && (
+        <MenuItem onClick={onContinueWithAgent} disabled={item.isProcessing === true}>
+          <GitFork className="h-3.5 w-3.5" />
+          <span className="flex-1">{t("sessionMenu.continueWithAnotherAgent")}</span>
         </MenuItem>
       )}
 

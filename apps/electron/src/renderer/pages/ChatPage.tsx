@@ -8,11 +8,12 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info, Pencil } from 'lucide-react'
+import { AlertCircle, Globe, Copy, RefreshCw, Link2Off, Info, Pencil, GitFork } from 'lucide-react'
 import { ChatDisplay, type ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
 import { CompactSessionMenu } from '@/components/app-shell/CompactSessionMenu'
+import { ContinueWithAgentDialog } from '@/components/app-shell/ContinueWithAgentDialog'
 import { SessionInfoPopover } from '@/components/app-shell/SessionInfoPopover'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { toast } from 'sonner'
@@ -32,6 +33,32 @@ import { resolveEffectiveConnectionSlug, isSessionConnectionUnavailable } from '
 
 export interface ChatPageProps {
   sessionId: string
+}
+
+function ContinuationChip({
+  targetSessionId,
+  label,
+  suffix,
+  title,
+}: {
+  targetSessionId: string
+  label: string
+  suffix?: string
+  title: string
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={() => navigate(routes.view.allSessions(targetSessionId))}
+      className="inline-flex max-w-40 shrink-0 items-center gap-1 rounded-full border border-foreground/10 bg-foreground/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      <GitFork className="h-2.5 w-2.5 shrink-0" />
+      <span className="truncate">{label}</span>
+      {suffix && <span className="shrink-0">{suffix}</span>}
+    </button>
+  )
 }
 
 const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
@@ -418,15 +445,59 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // Use isAsyncOperationOngoing for shimmer effect (sharing, updating share, revoking, title regeneration)
   const isAsyncOperationOngoing = session?.isAsyncOperationOngoing || sessionMeta?.isAsyncOperationOngoing || false
 
+  const continuationBadge = React.useMemo(() => {
+    if (!sessionMeta) return undefined
+    const chips: React.ReactNode[] = []
+    const fromId = sessionMeta.continuedFromSessionId
+    if (fromId) {
+      const from = sessionMetaMap.get(fromId)
+      const fromTitle = from ? getSessionTitle(from) : t('handoff.unknownSession')
+      chips.push(
+        <ContinuationChip
+          key={`from-${fromId}`}
+          targetSessionId={fromId}
+          label={t('handoff.fromChip', { name: fromTitle })}
+          title={t('handoff.openParent', { name: fromTitle })}
+        />,
+      )
+    }
+
+    const toIds = sessionMeta.continuedToSessionIds ?? []
+    const latestToId = toIds[toIds.length - 1]
+    if (latestToId) {
+      const target = sessionMetaMap.get(latestToId)
+      const targetTitle = target ? getSessionTitle(target) : t('handoff.unknownSession')
+      const extraCount = Math.max(0, toIds.length - 1)
+      chips.push(
+        <ContinuationChip
+          key={`to-${latestToId}`}
+          targetSessionId={latestToId}
+          label={t('handoff.toChip', { name: targetTitle })}
+          suffix={extraCount > 0 ? `+${extraCount}` : undefined}
+          title={t('handoff.openChild', { name: targetTitle })}
+        />,
+      )
+    }
+
+    return chips.length > 0
+      ? <span className="flex min-w-0 items-center gap-1">{chips}</span>
+      : undefined
+  }, [sessionMeta, sessionMetaMap, t])
+
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = React.useState(false)
   const [renameName, setRenameName] = React.useState('')
+  const [continueDialogOpen, setContinueDialogOpen] = React.useState(false)
 
   // Session action handlers
   const handleRename = React.useCallback(() => {
     setRenameName(displayTitle)
     setRenameDialogOpen(true)
   }, [displayTitle])
+
+  const handleContinueWithAgent = React.useCallback(() => {
+    setContinueDialogOpen(true)
+  }, [])
 
   const handleRenameSubmit = React.useCallback(() => {
     if (renameName.trim() && renameName.trim() !== displayTitle) {
@@ -658,6 +729,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       onMarkUnread={handleMarkUnread}
       onSessionStatusChange={handleSessionStatusChange}
       onOpenInNewWindow={handleOpenInNewWindow}
+      onContinueWithAgent={handleContinueWithAgent}
       onDelete={handleDelete}
     />
   ) : null, [
@@ -674,6 +746,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     handleMarkUnread,
     handleSessionStatusChange,
     handleOpenInNewWindow,
+    handleContinueWithAgent,
     handleDelete,
   ])
 
@@ -693,6 +766,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       onMarkUnread={handleMarkUnread}
       onSessionStatusChange={handleSessionStatusChange}
       onOpenInNewWindow={handleOpenInNewWindow}
+      onContinueWithAgent={handleContinueWithAgent}
       onDelete={handleDelete}
     />
   ) : null, [
@@ -711,8 +785,20 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     handleMarkUnread,
     handleSessionStatusChange,
     handleOpenInNewWindow,
+    handleContinueWithAgent,
     handleDelete,
   ])
+
+  const continueWithAgentDialog = sessionMeta ? (
+    <ContinueWithAgentDialog
+      open={continueDialogOpen}
+      onOpenChange={setContinueDialogOpen}
+      sessionId={sessionId}
+      parentTitle={displayTitle}
+      connections={llmConnections}
+      currentConnection={session?.llmConnection ?? workspaceDefaultLlmConnection}
+    />
+  ) : null
 
   // Handle missing session - loading or deleted
   if (!session) {
@@ -735,7 +821,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       return (
         <>
           <div className="h-full flex flex-col">
-            <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+            <PanelHeader title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={continuationBadge} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
                 ref={chatDisplayRef}
@@ -789,6 +875,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onSubmit={handleRenameSubmit}
             placeholder={t('chat.enterSessionName')}
           />
+          {continueWithAgentDialog}
         </>
       )
     }
@@ -808,7 +895,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col">
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        <PanelHeader title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={continuationBadge} actions={headerActions} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
             ref={chatDisplayRef}
@@ -869,6 +956,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         onSubmit={handleRenameSubmit}
         placeholder={t('chat.enterSessionName')}
       />
+      {continueWithAgentDialog}
     </>
   )
 })

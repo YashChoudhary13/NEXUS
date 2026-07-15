@@ -41,6 +41,7 @@ import {
   FlagOff,
   FolderOpen,
   Globe,
+  GitFork,
   Link2Off,
   MailOpen,
   MessageSquare,
@@ -105,6 +106,8 @@ export interface CompactSessionMenuProps {
   onSessionStatusChange: (state: SessionStatusId) => void
   onOpenInNewWindow: () => void
   onSendToWorkspace?: () => void
+  /** Open the linked account/model handoff dialog. */
+  onContinueWithAgent?: () => void
   onDelete: () => void
 
   // ---------------------------------------------------------------------------
@@ -141,6 +144,7 @@ export function CompactSessionMenu({
   onSessionStatusChange,
   onOpenInNewWindow,
   onSendToWorkspace,
+  onContinueWithAgent,
   onDelete,
   open: controlledOpen,
   onOpenChange,
@@ -302,6 +306,7 @@ export function CompactSessionMenu({
               onShare={closeAfter(actions.share)}
               onOpenShareSub={() => setView('share')}
               onSendToWorkspace={closeAfter(onSendToWorkspace)}
+              onContinueWithAgent={item.isProcessing ? undefined : closeAfter(onContinueWithAgent)}
               onOpenMessagingSub={() => setView('messaging')}
               onOpenStatusSub={() => setView('status')}
               onOpenLabelsSub={() => setView('labels')}
@@ -375,6 +380,7 @@ interface RootPaneProps {
   onShare?: () => void
   onOpenShareSub: () => void
   onSendToWorkspace?: () => void
+  onContinueWithAgent?: () => void
   onOpenMessagingSub: () => void
   onOpenStatusSub: () => void
   onOpenLabelsSub: () => void
@@ -406,6 +412,7 @@ function RootPane({
   onShare,
   onOpenShareSub,
   onSendToWorkspace,
+  onContinueWithAgent,
   onOpenMessagingSub,
   onOpenStatusSub,
   onOpenLabelsSub,
@@ -449,6 +456,12 @@ function RootPane({
       {hasRemoteWorkspaces && onSendToWorkspace && (
         <Row icon={<Send className="h-4 w-4" />} label={t('sessionMenu.sendToWorkspace')} onTap={onSendToWorkspace} />
       )}
+
+      <Row
+        icon={<GitFork className="h-4 w-4" />}
+        label={t('sessionMenu.continueWithAnotherAgent')}
+        onTap={onContinueWithAgent}
+      />
 
       <Row
         icon={<MessageSquare className="h-4 w-4" />}

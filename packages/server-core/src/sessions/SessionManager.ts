@@ -8,7 +8,7 @@ import { basename, dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary, resolveKeepBackgroundTasksAlive } from '@craft-agent/shared/agent'
+import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateAgentHandoffSummary, resolveKeepBackgroundTasksAlive } from '@craft-agent/shared/agent'
 import {
   resolveSessionConnection,
   createBackendFromConnection,
@@ -20,7 +20,7 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName } from '@craft-agent/shared/config'
+import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultModelsForConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior, getPersistedUiLanguage, resolveTitleLanguageName, type LlmConnection } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -81,7 +81,7 @@ import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, type ContinueWithAgentRequest, type ContinueWithAgentResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta, type TokenUsage } from '@craft-agent/core/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, invalidateSkillsCache, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -968,6 +968,10 @@ interface ManagedSession {
   transferredSessionSummary?: string
   // Whether the transferred-session summary has already been injected.
   transferredSessionSummaryApplied?: boolean
+  // Parent session whose generated handoff starts this session.
+  continuedFromSessionId?: string
+  // Sessions that were continued from this session (oldest to newest).
+  continuedToSessionIds?: string[]
   // Token refresh manager for OAuth token refresh with rate limiting
   tokenRefreshManager: TokenRefreshManager
   // Metadata for sessions created by automations
@@ -1106,6 +1110,42 @@ export function createManagedSession(
   }
 
   return managed
+}
+
+/**
+ * Validate an exact account/model target before any handoff summary work or
+ * session creation begins. The renderer only offers authenticated connections;
+ * the server remains authoritative about connection existence and model
+ * membership so a stale or forged request cannot bind an impossible target.
+ */
+export function validateAgentHandoffTarget(
+  connections: readonly LlmConnection[],
+  request: ContinueWithAgentRequest,
+): LlmConnection {
+  const connectionSlug = request.llmConnection?.trim()
+  const model = request.model?.trim()
+  if (!connectionSlug || !model) {
+    throw new Error('An account and model are required to continue with another agent')
+  }
+
+  const connection = connections.find(candidate => candidate.slug === connectionSlug)
+  if (!connection) {
+    throw new Error(`LLM connection not found: ${connectionSlug}`)
+  }
+
+  const configuredModels = connection.models?.length
+    ? connection.models
+    : getDefaultModelsForConnection(connection.providerType, connection.piAuthProvider)
+  const allowedModelIds = new Set(
+    configuredModels.map(candidate => typeof candidate === 'string' ? candidate : candidate.id),
+  )
+  if (connection.defaultModel) allowedModelIds.add(connection.defaultModel)
+
+  if (!allowedModelIds.has(model)) {
+    throw new Error(`Model ${model} is not available for LLM connection ${connectionSlug}`)
+  }
+
+  return connection
 }
 
 /**
@@ -5581,6 +5621,38 @@ export class SessionManager implements ISessionManager {
     // Get workspace slug before deleting
     const workspaceRootPath = managed.workspace.rootPath
 
+    // Remove linked-handoff references before deleting either side so surviving
+    // headers never retain navigation chips that point at a missing session.
+    const linkedSessionsToFlush: ManagedSession[] = []
+    if (managed.continuedFromSessionId) {
+      const parent = this.sessions.get(managed.continuedFromSessionId)
+      if (parent?.continuedToSessionIds?.includes(sessionId)) {
+        parent.continuedToSessionIds = parent.continuedToSessionIds.filter(id => id !== sessionId)
+        if (parent.continuedToSessionIds.length === 0) parent.continuedToSessionIds = undefined
+        this.persistSession(parent)
+        linkedSessionsToFlush.push(parent)
+        this.sendEvent({
+          type: 'session_metadata_changed',
+          sessionId: parent.id,
+          changes: { continuedToSessionIds: parent.continuedToSessionIds ?? null },
+        }, parent.workspace.id)
+      }
+    }
+    for (const childId of managed.continuedToSessionIds ?? []) {
+      const child = this.sessions.get(childId)
+      if (child?.continuedFromSessionId === sessionId) {
+        child.continuedFromSessionId = undefined
+        this.persistSession(child)
+        linkedSessionsToFlush.push(child)
+        this.sendEvent({
+          type: 'session_metadata_changed',
+          sessionId: child.id,
+          changes: { continuedFromSessionId: null },
+        }, child.workspace.id)
+      }
+    }
+    await Promise.all(linkedSessionsToFlush.map(linked => this.flushSession(linked.id)))
+
     // If processing is in progress, force-abort via Query.close() and wait for cleanup
     if (managed.isProcessing && managed.agent) {
       managed.agent.forceAbort(AbortReason.UserStop)
@@ -8556,7 +8628,7 @@ export class SessionManager implements ISessionManager {
     })
 
     try {
-      return await generateConversationSummary(messages, agent.runMiniCompletion.bind(agent))
+      return await generateAgentHandoffSummary(messages, agent.runMiniCompletion.bind(agent))
     } finally {
       agent.destroy()
     }
@@ -8595,6 +8667,109 @@ export class SessionManager implements ISessionManager {
       labels: managed.labels,
       permissionMode: managed.permissionMode,
       summary,
+    }
+  }
+
+  private getAgentHandoffConnections(): LlmConnection[] {
+    return getLlmConnections()
+  }
+
+  /**
+   * Continue an idle session in a fresh, linked child bound to the exact
+   * account/model selected by the user. The parent transcript and provider
+   * settings are never copied or changed; only a reverse linkage field is
+   * appended after the child has been created successfully.
+   */
+  async continueSessionWithAgent(
+    sessionId: string,
+    workspaceId: string,
+    target: ContinueWithAgentRequest,
+  ): Promise<ContinueWithAgentResult> {
+    const parent = this.sessions.get(sessionId)
+    if (!parent) throw new Error(`Session not found: ${sessionId}`)
+    if (parent.workspace.id !== workspaceId) {
+      throw new Error(`Session ${sessionId} does not belong to workspace ${workspaceId}`)
+    }
+    if (parent.isProcessing) {
+      throw new Error('Stop the current response before continuing with another agent')
+    }
+
+    validateAgentHandoffTarget(this.getAgentHandoffConnections(), target)
+
+    // Capture every durable parent message before asking the mini model for a
+    // handoff. This also gives cold sessions their full transcript in memory.
+    this.persistSession(parent)
+    await this.flushSession(parent.id)
+    const summary = (await this.generateRemoteTransferSummary(parent))?.trim()
+    if (!summary) {
+      throw new Error('This session needs conversation history before it can be continued')
+    }
+
+    const normalizedParentTitle = (parent.name || parent.preview || 'Untitled chat')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const parentTitle = normalizedParentTitle || 'Untitled chat'
+    const previousChildIds = parent.continuedToSessionIds
+      ? [...parent.continuedToSessionIds]
+      : undefined
+    let childId: string | undefined
+
+    try {
+      // Suppress createSession's early announcement: linkage, the visible note,
+      // and the hidden one-shot summary must all be durable before the renderer
+      // is allowed to hydrate the new child.
+      const childSession = await this.createSession(parent.workspace.id, {
+        name: `${parentTitle} · continued`,
+        permissionMode: parent.permissionMode,
+        thinkingLevel: target.thinkingLevel ?? parent.thinkingLevel,
+        workingDirectory: parent.workingDirectory ?? 'none',
+        model: target.model.trim(),
+        llmConnection: target.llmConnection.trim(),
+        enabledSourceSlugs: parent.enabledSourceSlugs,
+        projectId: parent.projectId,
+      }, { emitCreatedEvent: false })
+      childId = childSession.id
+
+      const child = this.sessions.get(childId)
+      if (!child) throw new Error(`Continued session ${childId} was not created`)
+
+      child.continuedFromSessionId = parent.id
+      child.transferredSessionSummary = summary
+      child.transferredSessionSummaryApplied = false
+      child.messages.push({
+        id: generateMessageId(),
+        role: 'info',
+        content: `Continued from ${parentTitle} · handoff:\n\n${summary}`,
+        timestamp: this.monotonic(),
+        infoLevel: 'info',
+      })
+      child.messageCount = child.messages.length
+
+      parent.continuedToSessionIds = [
+        ...(parent.continuedToSessionIds ?? []).filter(id => id !== child.id),
+        child.id,
+      ]
+
+      this.persistSession(child)
+      this.persistSession(parent)
+      await Promise.all([this.flushSession(child.id), this.flushSession(parent.id)])
+
+      this.sendEvent({
+        type: 'session_metadata_changed',
+        sessionId: parent.id,
+        changes: { continuedToSessionIds: [...parent.continuedToSessionIds] },
+      }, parent.workspace.id)
+      this.notifySessionCreated(parent.workspace.id, child.id)
+
+      return { sessionId: child.id, summary }
+    } catch (error) {
+      parent.continuedToSessionIds = previousChildIds
+      this.persistSession(parent)
+      await this.flushSession(parent.id).catch(() => {})
+      if (childId && this.sessions.has(childId)) {
+        await this.deleteSession(childId).catch(() => {})
+      }
+      throw error
     }
   }
 

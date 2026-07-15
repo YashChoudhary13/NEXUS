@@ -9,6 +9,8 @@ import { describe, test, expect } from 'bun:test'
 import type { LlmConnection } from '@craft-agent/shared/config/llm-connections'
 import {
   formatTokenCount,
+  chooseInitialHandoffConnection,
+  getConnectionModelOptions,
   groupConnectionsByProviderAccount,
   stripPiPrefixForDisplay,
 } from '../model-picker-helpers'
@@ -216,5 +218,48 @@ describe('groupConnectionsByProviderAccount', () => {
       ['anthropic', ['a']],
       ['openai', ['chatgpt-plus', 'chatgpt-plus-2']],
     ])
+  })
+})
+
+describe('getConnectionModelOptions', () => {
+  test('normalizes string/object models and puts the connection default first', () => {
+    const target = conn('codex-two', 'pi', {
+      defaultModel: 'gpt-5.2-codex',
+      models: [
+        { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' } as never,
+        'gpt-5.2-codex',
+      ],
+    })
+
+    expect(getConnectionModelOptions(target)).toEqual([
+      { id: 'gpt-5.2-codex', name: 'gpt-5.2-codex' },
+      { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+    ])
+  })
+
+  test('keeps a persisted default selectable when it is absent from models', () => {
+    const target = conn('custom', 'pi_compat', {
+      defaultModel: 'custom-default',
+      models: ['custom-secondary'],
+    })
+
+    expect(getConnectionModelOptions(target)).toEqual([
+      { id: 'custom-default', name: 'custom-default' },
+      { id: 'custom-secondary', name: 'custom-secondary' },
+    ])
+  })
+})
+
+describe('chooseInitialHandoffConnection', () => {
+  test('prefers another authenticated account over the current session account', () => {
+    const current = { ...conn('claude-primary', 'anthropic'), isAuthenticated: true }
+    const alternate = { ...conn('codex-two', 'pi'), isAuthenticated: true }
+    expect(chooseInitialHandoffConnection([current, alternate], current.slug)).toBe(alternate)
+  })
+
+  test('skips unauthenticated alternatives and falls back to the current account', () => {
+    const current = { ...conn('claude-primary', 'anthropic'), isAuthenticated: true }
+    const unavailable = { ...conn('codex-two', 'pi'), isAuthenticated: false }
+    expect(chooseInitialHandoffConnection([current, unavailable], current.slug)).toBe(current)
   })
 })
