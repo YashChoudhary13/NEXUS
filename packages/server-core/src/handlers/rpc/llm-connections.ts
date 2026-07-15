@@ -1048,6 +1048,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     } finally {
       if (runtimeInvalidations.size > 0) {
+        // This is intentionally a two-phase fence, not duplicate cleanup. The
+        // first promises begin disposal before credential mutation; the second
+        // pass catches a runtime created while deletion was in progress. That
+        // post-delete pass is required for non-OAuth connections, which have no
+        // credential lifecycle epoch to reject a concurrent runtime startup.
         await Promise.all(runtimeInvalidations.values())
         await Promise.all(
           [...runtimeInvalidations.keys()].map(connectionSlug => (

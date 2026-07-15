@@ -13,6 +13,8 @@
   [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); S1 passed the PR-1A
   engineering gate and **PR-1A is implemented + locally verified and open as
   [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge is pending**.
+  All five PR-1A review threads are addressed on the feature branch (four repairs plus one
+  documented concurrency rationale) and the result is verified;
   PR-1B through PR-1F remain unimplemented.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
@@ -60,6 +62,13 @@ Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance cri
   build clean apart from inherited warnings. Full server-core adds ten passing tests over clean
   `develop` and retains the same one inherited order-dependent runtime-config failure. No
   stored-schema or credential-format migration.
+- **2026-07-15:** PR-1A review repair narrows failed-refresh/rollback cleanup to the exact
+  slug's OAuth credential, so an API key, IAM credential, or service-account credential sharing
+  that slug cannot be erased. Credential deletion errors now identify the exact scoped account,
+  and the intentional two-phase runtime invalidation fence is documented. Verification: **98
+  focused tests / 427 assertions**, full shared **3,017 pass / 12 skip / 0 fail / 5,715
+  assertions**, shared/server-core/Electron typechecks, changed-file shared lint, and the complete
+  Electron build all pass; only the documented inherited build warnings remain.
 
 ## Next up ⏭️ (in order)
 
@@ -92,6 +101,16 @@ Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance cri
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-15 — PR-1A review findings repaired and regression-gated.** OAuth refresh
+  rollback and invalid-token cleanup now delete only `llm_oauth::{connectionSlug}` rather than
+  every credential type for that slug. A manager-level regression preserves API-key, IAM, and
+  service-account entries, while an isolated auth-state regression drives the real
+  `invalid_grant` path. Aggregate deletion failures report the complete scoped credential
+  account. The second exact-slug runtime invalidation remains intentionally present: it fences
+  a runtime created during credential deletion, including non-OAuth connections without a
+  credential lifecycle epoch. Pinned-Bun gates: 98 focused tests / 427 assertions, full shared
+  3,017 pass / 12 skip / 0 fail / 5,715 assertions, relevant typechecks and complete Electron
+  build pass. PR-1A remains open; PR-1B is next.
 - **2026-07-15 — PR-1A implemented, verified, pushed, and opened for review.**
   [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) targets `develop`. ChatGPT OAuth now
   derives the human principal from provider JWT claims without confusing it with the runtime

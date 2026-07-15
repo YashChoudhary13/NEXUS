@@ -184,9 +184,10 @@ whole-store cross-slug mutation ordering; atomic replacement and unreadable-snap
 durable failure/retry behavior across process restart;
 renderer refusal to transport ChatGPT identity; and Anthropic-only duplicate-warning semantics.
 
-**Verified 2026-07-15 with Bun 1.3.10:** the account suite passed **94 tests / 413 assertions**,
-then the exact-slug invalidation filter passed **1 test / 5 assertions** (95 tests and 418
-assertions total, zero failures). Full shared tests passed **3,015 / 0 failed / 12 skipped**;
+**Verified 2026-07-15 with Bun 1.3.10:** after PR review repairs, the account suite passed
+**96 tests / 420 assertions**, isolated failed-refresh cleanup passed **1 test / 2 assertions**,
+then the exact-slug invalidation filter passed **1 test / 5 assertions** (98 tests and 427
+assertions total, zero failures). Full shared tests passed **3,017 / 0 failed / 12 skipped**;
 shared, server-core, Electron, and web UI typechecks passed; and the complete Electron build
 (main, preload, renderer, resources, assets) passed. The inherited missing
 `tsconfig.base.json` warning remains unchanged. Full server-core adds ten passing tests and

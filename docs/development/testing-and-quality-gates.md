@@ -77,14 +77,15 @@ Bun 1.3.10 first on `PATH` (`PATH=/tmp/nexus-bun-1.3.10/bin:$PATH`).
 
 | Command | Exit | Result |
 |---------|------|--------|
-| `bun run test:account-identity` | 0 | ✅ 94 pass / 0 fail / 413 assertions, then exact-slug runtime invalidation 1 pass / 0 fail / 5 assertions |
-| `cd packages/shared && bun test` | 0 | ✅ 3,015 pass / 0 fail / 12 skip / 5,708 assertions |
+| `bun run test:account-identity` | 0 | ✅ 96 pass / 0 fail / 420 assertions, isolated failed-refresh cleanup 1 pass / 0 fail / 2 assertions, then exact-slug runtime invalidation 1 pass / 0 fail / 5 assertions |
+| `cd packages/shared && bun test` | 0 | ✅ 3,017 pass / 0 fail / 12 skip / 5,715 assertions |
 | `bun test packages/server-core/src` | 1 | ⚠️ 206 pass / 1 inherited order-dependent failure; clean `develop` fails the same test with 196 pass / 1 fail |
 | `bun run typecheck:shared` | 0 | ✅ clean |
 | `cd packages/server-core && bun run typecheck` | 0 | ✅ clean |
 | `bun run typecheck:electron` | 0 | ✅ clean |
 | `bun run webui:typecheck` | 0 | ✅ clean |
 | `bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| changed-file `eslint` from `packages/shared` | 0 | ✅ clean |
 | `bun run lint:i18n:parity` | 0 | ✅ 6 locales × 1,639 keys |
 | `bun run lint:i18n:sorted` | 0 | ✅ clean |
 | `git diff --check` | 0 | ✅ clean |
@@ -110,6 +111,14 @@ The real-provider S1 smoke also passed two simultaneous ChatGPT OAuth connection
 chat per slug, and clean-restart restoration. It proves separate user principals and slug-bound
 credentials/sessions; because both principals selected the same runtime workspace, independently
 billed subscription routing remains `[OPEN]` for the overall Phase 1 acceptance gate.
+
+The 2026-07-15 PR review follow-up added two deletion regressions. The credential-manager test
+proves OAuth-only deletion preserves API-key, IAM, and service-account credentials sharing the
+same connection slug and that persistence failures name the complete credential account. The
+isolated auth-state test drives an `invalid_grant` refresh failure and proves the real cleanup
+path never calls whole-slug deletion. The exact runtime filter still expects both invalidation
+passes: the pre-delete pass begins disposal, while the post-delete pass catches a runtime created
+during credential mutation (required for non-OAuth rows without a credential lifecycle epoch).
 
 ## Failure categories explained
 

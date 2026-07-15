@@ -159,7 +159,7 @@ export async function performTokenRefresh(
         if (previousGlobal) await manager.setClaudeOAuthCredentials(previousGlobal);
         else await manager.deleteClaudeOAuthCredentials();
         if (previousScoped) await manager.setLlmOAuth(connectionSlug, previousScoped);
-        else await manager.deleteLlmCredentials(connectionSlug);
+        else await manager.deleteLlmOAuth(connectionSlug);
       };
 
       try {
@@ -221,7 +221,7 @@ export async function performTokenRefresh(
         if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) return;
         // Clear the incompatible credential from both compatibility locations.
         await manager.deleteClaudeOAuthCredentials();
-        await manager.deleteLlmCredentials(connectionSlug);
+        await manager.deleteLlmOAuth(connectionSlug);
       });
     }
 

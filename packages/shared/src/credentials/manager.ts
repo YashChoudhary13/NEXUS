@@ -7,6 +7,7 @@
 
 import type { CredentialBackend } from './backends/types.ts';
 import type { CredentialId, CredentialType, StoredCredential, CredentialHealthStatus, CredentialHealthIssue } from './types.ts';
+import { credentialIdToAccount } from './types.ts';
 import type { LlmAuthType, LlmProviderType } from '../config/llm-connections.ts';
 import { SecureStorageBackend } from './backends/secure-storage.ts';
 import { debug } from '../utils/debug.ts';
@@ -148,6 +149,7 @@ export class CredentialManager {
   async delete(id: CredentialId): Promise<boolean> {
     await this.ensureInitialized();
 
+    const account = credentialIdToAccount(id);
     let deleted = false;
     const failures: unknown[] = [];
     for (const backend of this.backends) {
@@ -163,7 +165,7 @@ export class CredentialManager {
     }
 
     if (failures.length > 0) {
-      throw new AggregateError(failures, `Failed to persist credential deletion for ${id.type}`);
+      throw new AggregateError(failures, `Failed to persist credential deletion for ${account}`);
     }
 
     return deleted;
@@ -172,6 +174,7 @@ export class CredentialManager {
   deleteSync(id: CredentialId): boolean {
     this.ensureInitializedSync();
 
+    const account = credentialIdToAccount(id);
     let deleted = false;
     const failures: unknown[] = [];
     for (const backend of this.backends) {
@@ -192,7 +195,7 @@ export class CredentialManager {
     }
 
     if (failures.length > 0) {
-      throw new AggregateError(failures, `Failed to persist credential deletion for ${id.type}`);
+      throw new AggregateError(failures, `Failed to persist credential deletion for ${account}`);
     }
 
     return deleted;
@@ -405,6 +408,16 @@ export class CredentialManager {
       expiresAt: credentials.expiresAt,
       idToken: credentials.idToken,
     });
+  }
+
+  /**
+   * Delete only the OAuth token for an LLM connection.
+   *
+   * Refresh rollback and invalid-token cleanup must not remove API-key, IAM,
+   * or service-account credentials that happen to share the same slug.
+   */
+  async deleteLlmOAuth(connectionSlug: string): Promise<boolean> {
+    return this.delete({ type: 'llm_oauth', connectionSlug });
   }
 
   /**
