@@ -39,7 +39,7 @@ import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
 import { derivePickerMode } from './picker-mode'
 import {
   formatTokenCount,
-  groupConnectionsByProvider,
+  groupConnectionsByProviderAccount,
   stripPiPrefixForDisplay,
 } from './model-picker-helpers'
 import { useModelVisionToggle } from './useModelVisionToggle'
@@ -131,7 +131,7 @@ export function CompactModelSelector({
   }, [availableModels, currentModel])
 
   const connectionsByProvider = React.useMemo(
-    () => groupConnectionsByProvider(llmConnections),
+    () => groupConnectionsByProviderAccount(llmConnections),
     [llmConnections],
   )
 
@@ -234,12 +234,12 @@ export function CompactModelSelector({
               onToggleVision={toggleVision}
             />
           ) : pickerMode === 'switcher' ? (
-            connectionsByProvider.map(([providerName, connections]) => (
-              <React.Fragment key={providerName}>
+            connectionsByProvider.map(providerGroup => (
+              <React.Fragment key={providerGroup.id}>
                 <div className="px-3 pt-3 pb-1 text-xs font-medium text-foreground/60 uppercase tracking-wide select-none">
-                  {providerName}
+                  {providerGroup.labelKey ? t(providerGroup.labelKey) : providerGroup.label}
                 </div>
-                {connections.map(conn => {
+                {providerGroup.accounts.map(({ connection: conn, identityLine }) => {
                   const isCurrentConnection = effectiveConnection === conn.slug
                   const isAuthenticated = conn.isAuthenticated
                   const isExpanded = expandedConnection === conn.slug
@@ -261,6 +261,11 @@ export function CompactModelSelector({
                         <ConnectionIcon connection={conn} size={14} />
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{conn.name}</div>
+                          {identityLine && (
+                            <div className="text-xs text-muted-foreground truncate">
+                              {identityLine}
+                            </div>
+                          )}
                           {!isAuthenticated && (
                             <div className="text-xs text-muted-foreground">
                               {t('settings.ai.notAuthenticated')}

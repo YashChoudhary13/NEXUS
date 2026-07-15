@@ -2,6 +2,7 @@ import {
   isLocalConnection,
   type LlmConnection,
 } from '@config/llm-connections'
+import { getProviderMetadata } from '@config/provider-metadata'
 
 /**
  * Format token count for display (e.g., 1500 -> "1.5k", 200000 -> "200k").
@@ -25,31 +26,135 @@ export function stripPiPrefixForDisplay(value: string): string {
   return value.startsWith('pi/') ? value.slice(3) : value
 }
 
-export type ConnectionGroup = [groupName: string, connections: LlmConnection[]]
+export type ProviderLabelKey =
+  | 'chat.modelPicker.provider.anthropic'
+  | 'chat.modelPicker.provider.customApis'
+  | 'chat.modelPicker.provider.githubCopilot'
+  | 'chat.modelPicker.provider.local'
+  | 'chat.modelPicker.provider.openai'
+  | 'chat.modelPicker.provider.other'
 
-/**
- * Group connections by provider type for hierarchical picker rendering.
- * Each provider section can contain multiple connections (API Key, OAuth, …).
- * Order is significant for UI: Anthropic, Local, Craft Agents Backend.
- * Empty groups are dropped.
- */
-export function groupConnectionsByProvider<T extends LlmConnection>(
-  connections: readonly T[],
-): Array<[string, T[]]> {
-  const groups: Record<string, T[]> = {
-    'Anthropic': [],
-    'Local': [],
-    'Craft Agents Backend': [],
-  }
-  for (const conn of connections) {
-    const provider = conn.providerType || 'anthropic'
-    if (provider === 'anthropic') {
-      groups['Anthropic'].push(conn)
-    } else if (provider === 'pi_compat' && isLocalConnection(conn)) {
-      groups['Local'].push(conn)
-    } else if (provider === 'pi' || provider === 'pi_compat') {
-      groups['Craft Agents Backend'].push(conn)
+export interface AccountPickerEntry<T extends LlmConnection = LlmConnection> {
+  connection: T
+  identityLine: string | null
+}
+
+export interface ProviderAccountGroup<T extends LlmConnection = LlmConnection> {
+  id: string
+  label?: string
+  labelKey?: ProviderLabelKey
+  accounts: AccountPickerEntry<T>[]
+}
+
+interface ProviderDescriptor {
+  id: string
+  label?: string
+  labelKey?: ProviderLabelKey
+  order: number
+}
+
+function humanizeProviderId(provider: string): string {
+  return provider
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function describeProvider(connection: LlmConnection): ProviderDescriptor {
+  const provider = connection.providerType || 'anthropic'
+  if (provider === 'anthropic' || connection.piAuthProvider === 'anthropic') {
+    return {
+      id: 'anthropic',
+      labelKey: 'chat.modelPicker.provider.anthropic',
+      order: 10,
     }
   }
-  return Object.entries(groups).filter(([, conns]) => conns.length > 0)
+
+  if (provider === 'pi') {
+    if (connection.piAuthProvider === 'openai-codex' || connection.piAuthProvider === 'openai') {
+      return {
+        id: 'openai',
+        labelKey: 'chat.modelPicker.provider.openai',
+        order: 20,
+      }
+    }
+    if (connection.piAuthProvider === 'github-copilot') {
+      return {
+        id: 'github-copilot',
+        labelKey: 'chat.modelPicker.provider.githubCopilot',
+        order: 30,
+      }
+    }
+    if (connection.piAuthProvider) {
+      const metadata = getProviderMetadata(provider, connection.piAuthProvider)
+      return {
+        id: `pi:${connection.piAuthProvider}`,
+        label: metadata?.name ?? humanizeProviderId(connection.piAuthProvider),
+        order: 50,
+      }
+    }
+    return {
+      id: 'other',
+      labelKey: 'chat.modelPicker.provider.other',
+      order: 80,
+    }
+  }
+
+  if (provider === 'pi_compat' && isLocalConnection(connection)) {
+    return {
+      id: 'local',
+      labelKey: 'chat.modelPicker.provider.local',
+      order: 40,
+    }
+  }
+
+  return {
+    id: 'custom-apis',
+    labelKey: 'chat.modelPicker.provider.customApis',
+    order: 70,
+  }
+}
+
+function getIdentityLine(connection: LlmConnection): string | null {
+  const parts = [connection.oauthAccountEmail, connection.oauthOrganizationName]
+    .map(value => value?.trim())
+    .filter((value): value is string => !!value)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+/**
+ * Build the picker hierarchy Provider → Account/connection → Models.
+ *
+ * Connections keep their input order within each provider. Provider order is
+ * stable and user-facing backend implementation names never leak into labels.
+ */
+export function groupConnectionsByProviderAccount<T extends LlmConnection>(
+  connections: readonly T[],
+): ProviderAccountGroup<T>[] {
+  const groups = new Map<string, ProviderAccountGroup<T> & { order: number }>()
+
+  for (const conn of connections) {
+    const descriptor = describeProvider(conn)
+    const entry = {
+      connection: conn,
+      identityLine: getIdentityLine(conn),
+    }
+    const existing = groups.get(descriptor.id)
+    if (existing) {
+      existing.accounts.push(entry)
+    } else {
+      groups.set(descriptor.id, {
+        id: descriptor.id,
+        label: descriptor.label,
+        labelKey: descriptor.labelKey,
+        accounts: [entry],
+        order: descriptor.order,
+      })
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => a.order - b.order)
+    .map(({ order: _order, ...group }) => group)
 }

@@ -9,7 +9,7 @@ import { describe, test, expect } from 'bun:test'
 import type { LlmConnection } from '@craft-agent/shared/config/llm-connections'
 import {
   formatTokenCount,
-  groupConnectionsByProvider,
+  groupConnectionsByProviderAccount,
   stripPiPrefixForDisplay,
 } from '../model-picker-helpers'
 
@@ -75,7 +75,7 @@ describe('formatTokenCount', () => {
 })
 
 // -----------------------------------------------------------------------------
-// groupConnectionsByProvider
+// groupConnectionsByProviderAccount
 // -----------------------------------------------------------------------------
 
 function conn(
@@ -93,63 +93,128 @@ function conn(
   }
 }
 
-describe('groupConnectionsByProvider', () => {
+describe('groupConnectionsByProviderAccount', () => {
   test('returns empty array for empty input', () => {
-    expect(groupConnectionsByProvider([])).toEqual([])
+    expect(groupConnectionsByProviderAccount([])).toEqual([])
   })
 
-  test('groups anthropic providers into "Anthropic"', () => {
+  test('keeps a single account and its model list unchanged', () => {
+    const only = conn('claude-pro', 'anthropic', {
+      models: ['claude-opus-4-8', 'claude-sonnet-4-6'],
+      defaultModel: 'claude-opus-4-8',
+    })
+
+    expect(groupConnectionsByProviderAccount([only])).toEqual([{
+      id: 'anthropic',
+      labelKey: 'chat.modelPicker.provider.anthropic',
+      accounts: [{ connection: only, identityLine: null }],
+    }])
+  })
+
+  test('groups direct and Pi Anthropic connections under one provider', () => {
     const a = conn('a', 'anthropic')
-    const b = conn('b', 'anthropic')
-    const result = groupConnectionsByProvider([a, b])
-    expect(result).toEqual([['Anthropic', [a, b]]])
+    const b = conn('b', 'pi', { piAuthProvider: 'anthropic' })
+    const result = groupConnectionsByProviderAccount([a, b])
+    expect(result).toEqual([{
+      id: 'anthropic',
+      labelKey: 'chat.modelPicker.provider.anthropic',
+      accounts: [
+        { connection: a, identityLine: null },
+        { connection: b, identityLine: null },
+      ],
+    }])
   })
 
   test('preserves intra-group order', () => {
     const a = conn('first', 'anthropic')
     const b = conn('second', 'anthropic')
     const c = conn('third', 'anthropic')
-    const result = groupConnectionsByProvider([a, b, c])
-    expect(result[0][1].map(c => c.slug)).toEqual(['first', 'second', 'third'])
+    const result = groupConnectionsByProviderAccount([a, b, c])
+    expect(result[0].accounts.map(entry => entry.connection.slug))
+      .toEqual(['first', 'second', 'third'])
   })
 
-  test('places "Anthropic" group before pi groups (display order)', () => {
-    const piConn = conn('pi-1', 'pi')
+  test('places Anthropic before OpenAI regardless of input order', () => {
+    const piConn = conn('pi-1', 'pi', { piAuthProvider: 'openai-codex' })
     const anth = conn('anthropic-1', 'anthropic')
-    const result = groupConnectionsByProvider([piConn, anth])
-    expect(result.map(([k]) => k)).toEqual(['Anthropic', 'Craft Agents Backend'])
+    const result = groupConnectionsByProviderAccount([piConn, anth])
+    expect(result.map(group => group.id)).toEqual(['anthropic', 'openai'])
   })
 
-  test('"pi_compat" with localhost baseUrl goes to "Local"', () => {
+  test('adds account identity beneath the connection name when available', () => {
+    const first = conn('chatgpt-plus', 'pi', {
+      authType: 'oauth',
+      name: 'Codex Builder',
+      piAuthProvider: 'openai-codex',
+      oauthAccountEmail: 'builder@example.com',
+      oauthOrganizationName: 'Studio',
+    })
+    const second = conn('chatgpt-plus-2', 'pi', {
+      authType: 'oauth',
+      name: 'Codex Reviewer',
+      piAuthProvider: 'openai-codex',
+      oauthAccountEmail: 'reviewer@example.com',
+    })
+
+    const [openai] = groupConnectionsByProviderAccount([first, second])
+    expect(openai.id).toBe('openai')
+    expect(openai.accounts).toEqual([
+      { connection: first, identityLine: 'builder@example.com · Studio' },
+      { connection: second, identityLine: 'reviewer@example.com' },
+    ])
+  })
+
+  test('keeps Copilot separate from OpenAI even when identities match', () => {
+    const codex = conn('chatgpt-plus', 'pi', {
+      piAuthProvider: 'openai-codex',
+      oauthAccountEmail: 'same@example.com',
+    })
+    const copilot = conn('github-copilot', 'pi', {
+      piAuthProvider: 'github-copilot',
+      oauthAccountEmail: 'same@example.com',
+    })
+    expect(groupConnectionsByProviderAccount([copilot, codex]).map(group => group.id))
+      .toEqual(['openai', 'github-copilot'])
+  })
+
+  test('pi_compat with localhost baseUrl goes to Local', () => {
     const local = conn('ollama', 'pi_compat', { baseUrl: 'http://localhost:11434' })
-    const result = groupConnectionsByProvider([local])
-    expect(result).toEqual([['Local', [local]]])
+    const result = groupConnectionsByProviderAccount([local])
+    expect(result[0]).toEqual({
+      id: 'local',
+      labelKey: 'chat.modelPicker.provider.local',
+      accounts: [{ connection: local, identityLine: null }],
+    })
   })
 
-  test('"pi_compat" with remote baseUrl goes to "Craft Agents Backend"', () => {
+  test('pi_compat with remote baseUrl uses the translated Custom APIs group', () => {
     const remote = conn('openrouter', 'pi_compat', { baseUrl: 'https://openrouter.ai/api/v1' })
-    const result = groupConnectionsByProvider([remote])
-    expect(result).toEqual([['Craft Agents Backend', [remote]]])
+    const result = groupConnectionsByProviderAccount([remote])
+    expect(result[0]).toEqual({
+      id: 'custom-apis',
+      labelKey: 'chat.modelPicker.provider.customApis',
+      accounts: [{ connection: remote, identityLine: null }],
+    })
   })
 
-  test('drops empty groups from the output', () => {
-    const a = conn('a', 'anthropic')
-    const result = groupConnectionsByProvider([a])
-    // Only "Anthropic" appears; "Local" and "Craft Agents Backend" are dropped.
-    expect(result.length).toBe(1)
-    expect(result[0][0]).toBe('Anthropic')
+  test('uses provider metadata for other Pi providers', () => {
+    const bedrock = conn('bedrock', 'pi', { piAuthProvider: 'amazon-bedrock' })
+    const result = groupConnectionsByProviderAccount([bedrock])
+    expect(result[0].id).toBe('pi:amazon-bedrock')
+    expect(result[0].label).toBe('Amazon Bedrock')
   })
 
-  test('full mixed input — anthropic + local + remote pi_compat + pi', () => {
+  test('one Claude and two Codex accounts produce two providers and three accounts', () => {
     const anth = conn('a', 'anthropic')
-    const local = conn('ollama', 'pi_compat', { baseUrl: 'http://127.0.0.1:1234' })
-    const remote = conn('or', 'pi_compat', { baseUrl: 'https://openrouter.ai' })
-    const pi = conn('p', 'pi')
-    const result = groupConnectionsByProvider([anth, local, remote, pi])
-    expect(result.map(([k, conns]) => [k, conns.map(c => c.slug)])).toEqual([
-      ['Anthropic', ['a']],
-      ['Local', ['ollama']],
-      ['Craft Agents Backend', ['or', 'p']],
+    const codex1 = conn('chatgpt-plus', 'pi', { piAuthProvider: 'openai-codex' })
+    const codex2 = conn('chatgpt-plus-2', 'pi', { piAuthProvider: 'openai-codex' })
+    const result = groupConnectionsByProviderAccount([codex1, anth, codex2])
+    expect(result.map(group => [
+      group.id,
+      group.accounts.map(entry => entry.connection.slug),
+    ])).toEqual([
+      ['anthropic', ['a']],
+      ['openai', ['chatgpt-plus', 'chatgpt-plus-2']],
     ])
   })
 })

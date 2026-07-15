@@ -139,6 +139,9 @@ warning; two genuinely different accounts do not.
 
 ### PR-1D — Account-aware model picker
 
+**Status (2026-07-15):** `[IMPLEMENTED LOCALLY]` on `feature/account-aware-picker`; publication
+is paused because the required GitHub CLI is not installed/authenticated.
+
 **Change:** picker hierarchy provider → **account** → models.
 
 - `model-picker-helpers.ts`: replace flat `groupConnectionsByProvider` output with
@@ -159,6 +162,24 @@ warning; two genuinely different accounts do not.
 **DoD:** with 1 Claude + 2 Codex connections, the picker shows three account entries under
 two providers, each with its own models; "a new session can choose any account/model
 combination".
+
+**Implementation evidence (2026-07-15):** both picker consumers now use a shared pure
+`Provider → Account/connection` view model. Direct and Pi-backed Anthropic connections group
+under Anthropic; Codex, Copilot, local, custom, and other Pi providers remain distinct.
+Account rows show the saved name plus trimmed email/organization identity, and each row keeps
+its original connection object/model list. The picker-specific "Craft Agents Backend" label
+is replaced by localized provider-family labels in English plus all six translated locales.
+The focused gate is wired into `validate:dev`.
+
+Verification passed: 33 focused tests; 473 renderer tests; 108 shared tests; Electron/shared
+typechecks; locale parity (1,645 keys in each locale) and sorting; changed-file lint with zero
+errors; main/preload/toolbar/interceptor/renderer production compilation and asset copy. The
+isolated built-app smoke rendered Anthropic → Claude Pro and OpenAI → Codex Builder + Codex
+Reviewer with identity lines, opened every account's model submenu, and persisted a pre-send
+selection as `llmConnection: chatgpt-plus-2` + `model: pi/gpt-5.4-mini`. The repository-wide
+`build` wrapper still stops on inherited lint violations in untouched files, and its final
+asset-validation script is absent from this OSS snapshot; neither failure is introduced by
+PR-1D.
 
 ### PR-1F — Copilot identity capture (D-020)
 

@@ -1,7 +1,7 @@
 # Roadmap
 
 **Status:** build order `[DECIDED]` (master plan); per-item statuses labeled.
-**Last updated:** 2026-07-14.
+**Last updated:** 2026-07-15.
 
 ## Build order
 
@@ -22,7 +22,7 @@ Phase 3  →  Brain UI, Obsidian workflows, and Graphify graph
 | Phase | Plan | Status |
 |-------|------|--------|
 | **Phase 0 — Foundation & repository stabilization** | [`../plans/phase-0-foundation.md`](../plans/phase-0-foundation.md) | ✅ **Complete** (2026-07-14) |
-| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[DECIDED]` — **signed off 2026-07-14 (D-020…D-023); implementation authorized** and delegated ([kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md)); first act = S1 multi-Codex spike. No Phase 1 code landed yet |
+| **Phase 1 — Multi-account Chat foundation** | [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md) | `[IN PROGRESS]` — S1 passed; PR-1A open as #1; PR-1B/1C/1D implemented and verified locally; PR-1F + PR-1E + combined phase gate remain. Local PR publication is paused until GitHub CLI is installed/authenticated |
 | **Memory foundation — shared project context** | [`../plans/memory-foundation.md`](../plans/memory-foundation.md) | `[PLANNED]` — after Phase 1, before Phase 2 |
 | **Phase 2 — Swarm & multi-agent orchestration** | [`../plans/phase-2-swarm.md`](../plans/phase-2-swarm.md) | `[PLANNED]` |
 | **Phase 3 — Brain, Obsidian & Graphify** | [`../plans/phase-3-brain.md`](../plans/phase-3-brain.md) | `[PLANNED]` |
@@ -61,10 +61,11 @@ These run alongside the product phases; each is one scoped concern.
 - [x] Produce the detailed Phase 1 implementation plan
       ([`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md), 2026-07-14)
 
-**Current milestone → Phase 1 implementation.** Signed off 2026-07-14 (D-020…D-023);
-execution delegated via the [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md);
-first implementation act is the S1 multi-Codex spike (owner performs the two OAuth logins).
-PR #1 branding runs in parallel once artwork arrives.
+**Current milestone → finish Phase 1.** S1 and PR-1A are complete; PR-1B/1C/1D are locally
+implemented and independently verified. Next is PR-1F Copilot identity, then PR-1E linked
+handoff, followed by combined regression and owner sign-off. Feature branches continue to
+target `develop`; `main` remains untouched. PR #1 branding runs in parallel once artwork
+arrives.
 
 ## Open questions `[OPEN]`
 
