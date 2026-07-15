@@ -8,8 +8,10 @@ not complete**. §8 questions were answered (D-020…D-023), implementation was 
 S1 spike, which **passed its PR-1A engineering gate on 2026-07-14**. PR-1A is implemented and
 locally verified on `feature/account-identity` and open as
 [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge into `develop` is still pending.
-PR-1B through PR-1F remain unimplemented, no Phase 1 feature branch has merged, and the overall
-phase acceptance criterion for independently billed subscriptions remains `[OPEN]`. Baseline
+PR-1B, PR-1C, and PR-1D are published as draft PRs #2–#4. PR-1F and PR-1E are implemented
+and locally verified; they are published as clean dependency stacks and retargeted to `develop`
+after PR-1A and PR-1D land. Final integrated regression, owner acceptance, review/merge, and
+the overall phase acceptance criterion for independently billed subscriptions remain `[OPEN]`. Baseline
 references were verified against `4289b16`.
 
 > Path note: the master plan referenced `docs/superpowers/plans/…`; per the roadmap decision
@@ -268,12 +270,20 @@ combination".
 
 ### PR-1F — Copilot identity capture (D-020)
 
+**Implementation status (2026-07-15):** `[IMPLEMENTED LOCALLY]` on
+`feature/copilot-identity`, stacked on PR-1A pending its merge. The Pi SDK mini-verification
+confirmed `read:user`; the implementation uses `/user` plus the public
+`/users/{login}/orgs` endpoint, displays `@login` when the profile email is private, and does
+not broaden OAuth scopes. Focused tests, the wider account gate, relevant typechecks, full
+Electron build, and isolated built-app row smoke pass. Commit/push/PR remain blocked on the
+missing authenticated GitHub CLI.
+
 **Change:** populate the same connection identity fields for GitHub Copilot connections.
 
 - Mechanism differs from PR-1A: Copilot OAuth yields a GitHub token, not an identity JWT —
   resolve identity via a GitHub user lookup (`/user`, plus org where available) at OAuth
-  completion. ⚠️ Exact token audience/scopes unverified — the PR starts with its own
-  mini-verification against a real Copilot login before code review. Fail-soft like the other
+  completion. ✅ The SDK mini-verification confirmed the durable refresh value is the GitHub
+  access token and the device flow requests `read:user`; no broader scope was added. Fail-soft like the other
   parsers: identity absent must never break login.
 - Same persistence path as PR-1A (`updateLlmConnection` guarded assignments); **no new stored
   fields**. Re-stamp on token refresh where applicable.

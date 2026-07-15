@@ -11,7 +11,7 @@ import {
   withLlmCredentialCommit,
 } from '@craft-agent/shared/credentials'
 import { setSetupDeferred } from '@craft-agent/shared/config/storage'
-import { clearOAuthState } from '@craft-agent/shared/auth'
+import { clearOAuthState, resolveGitHubOAuthIdentity } from '@craft-agent/shared/auth'
 import {
   resolveSetupTestConnectionHint,
   testBackendConnection,
@@ -96,6 +96,14 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     createdAt: number
   }
 
+  interface PendingCopilotIdentity {
+    identity?: OAuthIdentityDto
+    ownerClientId: string
+    oauthEpoch: number
+    slugGeneration: number
+    createdAt: number
+  }
+
   const configuredChatGptOAuthTtl = Number(process.env.CRAFT_TEST_CHATGPT_OAUTH_TTL_MS)
   const CHATGPT_OAUTH_TTL_MS = Number.isFinite(configuredChatGptOAuthTtl) && configuredChatGptOAuthTtl > 0
     ? configuredChatGptOAuthTtl
@@ -103,6 +111,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // Credentials are global per connection slug, so there can be only one
   // current pending identity receipt for a slug across all RPC clients.
   const pendingChatGptIdentities = new Map<string, PendingChatGptIdentity>()
+  const pendingCopilotIdentities = new Map<string, PendingCopilotIdentity>()
   const chatGptOAuthStartGenerationBySlug = new Map<string, number>()
   const pendingConnectionCreationBySlug = new Map<string, symbol>()
 
@@ -170,6 +179,21 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   }
 
+  function cleanupExpiredCopilotIdentities(): void {
+    const now = Date.now()
+    for (const [key, pending] of pendingCopilotIdentities) {
+      if (now - pending.createdAt > CHATGPT_OAUTH_TTL_MS) {
+        pendingCopilotIdentities.delete(key)
+      }
+    }
+  }
+
+  function clearCopilotOAuthStateForSlug(connectionSlug: string): void {
+    pendingCopilotIdentities.delete(connectionSlug)
+    copilotOAuthAborts.get(connectionSlug)?.controller.abort()
+    copilotOAuthAborts.delete(connectionSlug)
+  }
+
   // Unified handler for LLM connection setup
   server.handle(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
     let pendingConnectionCreationToken: symbol | undefined
@@ -198,8 +222,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         } else if (missingUpdateOnlyOAuthKind === 'copilot') {
           advanceCopilotOAuthStartGeneration(setup.slug)
           revokeLlmCredentials(setup.slug)
-          copilotOAuthAborts.get(setup.slug)?.controller.abort()
-          copilotOAuthAborts.delete(setup.slug)
+          clearCopilotOAuthStateForSlug(setup.slug)
         } else if (missingUpdateOnlyOAuthKind === 'claude') {
           revokeLlmCredentials(setup.slug)
           if (isClaudeOAuthFlowForConnection(setup.slug)) {
@@ -239,8 +262,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
             if (missingUpdateOnlyOAuthKind) {
               revokeLlmCredentials(setup.slug)
               clearChatGptOAuthStateForSlug(setup.slug)
-              copilotOAuthAborts.get(setup.slug)?.controller.abort()
-              copilotOAuthAborts.delete(setup.slug)
+              clearCopilotOAuthStateForSlug(setup.slug)
               const affectedRuntimeSlugs = [
                 setup.slug,
                 ...(missingUpdateOnlyOAuthKind === 'claude'
@@ -451,6 +473,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       // Canonical slug provenance means mutable provider metadata cannot switch a
       // Codex connection into the legacy client-authored Claude identity branch.
       cleanupExpiredChatGptIdentities()
+      cleanupExpiredCopilotIdentities()
       const pendingChatGptIdentity = usesServerOwnedChatGptOAuth
         ? pendingChatGptIdentities.get(setup.slug)
         : undefined
@@ -459,6 +482,15 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         && pendingChatGptIdentity.ownerClientId === ctx.clientId
         && isChatGptOAuthStartGenerationCurrent(setup.slug, pendingChatGptIdentity.startGeneration)
         && isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
+      )
+      const pendingCopilotIdentity = usesServerOwnedCopilotOAuth
+        ? pendingCopilotIdentities.get(setup.slug)
+        : undefined
+      const canConsumePendingCopilotIdentity = !!(
+        pendingCopilotIdentity
+        && pendingCopilotIdentity.ownerClientId === ctx.clientId
+        && isCopilotOAuthStartGenerationCurrent(setup.slug, pendingCopilotIdentity.slugGeneration)
+        && isLlmCredentialEpochCurrent(setup.slug, pendingCopilotIdentity.oauthEpoch)
       )
       const hasConflictingStoredChatGptBinding = usesServerOwnedChatGptOAuth
         && !isNewConnection
@@ -475,9 +507,17 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           error: 'Complete the server ChatGPT OAuth flow before creating this connection.',
         }
       }
+      if (usesServerOwnedCopilotOAuth && isNewConnection && !canConsumePendingCopilotIdentity) {
+        return {
+          success: false,
+          error: 'Complete the server GitHub Copilot OAuth flow before creating this connection.',
+        }
+      }
       const oauthIdentity = usesServerOwnedChatGptOAuth
         ? (canConsumePendingChatGptIdentity ? pendingChatGptIdentity?.identity : undefined)
-        : setup.oauthIdentity
+        : usesServerOwnedCopilotOAuth
+          ? (canConsumePendingCopilotIdentity ? pendingCopilotIdentity?.identity : undefined)
+          : setup.oauthIdentity
       const hasUsableOAuthIdentity = !!(
         oauthIdentity?.account?.uuid
         || oauthIdentity?.account?.emailAddress
@@ -486,7 +526,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       )
       const shouldReplaceOAuthIdentity = usesServerOwnedChatGptOAuth
         ? canConsumePendingChatGptIdentity
-        : hasUsableOAuthIdentity
+        : usesServerOwnedCopilotOAuth
+          ? canConsumePendingCopilotIdentity
+          : hasUsableOAuthIdentity
       if (shouldReplaceOAuthIdentity) {
         updates.oauthAccountUuid = oauthIdentity?.account?.uuid
         updates.oauthAccountEmail = oauthIdentity?.account?.emailAddress
@@ -572,6 +614,14 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           || !isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
         )) {
           return { success: false, error: 'ChatGPT OAuth changed during setup. Please try again.' }
+        }
+
+        if (canConsumePendingCopilotIdentity && pendingCopilotIdentity && (
+          pendingCopilotIdentities.get(setup.slug) !== pendingCopilotIdentity
+          || !isCopilotOAuthStartGenerationCurrent(setup.slug, pendingCopilotIdentity.slugGeneration)
+          || !isLlmCredentialEpochCurrent(setup.slug, pendingCopilotIdentity.oauthEpoch)
+        )) {
+          return { success: false, error: 'GitHub Copilot OAuth changed during setup. Please try again.' }
         }
 
         if (usesServerOwnedClaudeOAuth) {
@@ -672,6 +722,15 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         && isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
       ) {
         pendingChatGptIdentities.delete(setup.slug)
+      }
+      if (
+        canConsumePendingCopilotIdentity
+        && pendingCopilotIdentity
+        && pendingCopilotIdentities.get(setup.slug) === pendingCopilotIdentity
+        && isCopilotOAuthStartGenerationCurrent(setup.slug, pendingCopilotIdentity.slugGeneration)
+        && isLlmCredentialEpochCurrent(setup.slug, pendingCopilotIdentity.oauthEpoch)
+      ) {
+        pendingCopilotIdentities.delete(setup.slug)
       }
 
       return { success: true }
@@ -952,8 +1011,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     } else if (requestedOAuthKind === 'copilot') {
       advanceCopilotOAuthStartGeneration(slug)
       revokeLlmCredentials(slug)
-      copilotOAuthAborts.get(slug)?.controller.abort()
-      copilotOAuthAborts.delete(slug)
+      clearCopilotOAuthStateForSlug(slug)
     } else if (requestedOAuthKind === 'claude') {
       revokeLlmCredentials(slug)
       if (isClaudeOAuthFlowForConnection(slug)) {
@@ -987,8 +1045,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         const credentialManager = getCredentialManager()
         if (usesOAuthCredentialLifecycle) revokeLlmCredentials(slug)
         clearChatGptOAuthStateForSlug(slug)
-        copilotOAuthAborts.get(slug)?.controller.abort()
-        copilotOAuthAborts.delete(slug)
+        clearCopilotOAuthStateForSlug(slug)
         beginRuntimeInvalidation(slug)
         for (const survivor of survivingClaudeOAuthConnections) {
           // Every live Claude subprocess may have inherited the process-global
@@ -1604,9 +1661,10 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         const connection = getLlmConnection(connectionSlug)
         if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)) return undefined
         const bindingVersion = bumpLlmConnectionBindingVersion(connectionSlug)
-        const oauthEpoch = await withLlmCredentialCommit(connectionSlug, async () => (
-          beginLlmOAuthCredentialFlow(connectionSlug)
-        ))
+        const oauthEpoch = await withLlmCredentialCommit(connectionSlug, async () => {
+          pendingCopilotIdentities.delete(connectionSlug)
+          return beginLlmOAuthCredentialFlow(connectionSlug)
+        })
         return { bindingVersion, oauthEpoch }
       })
       if (!flowBinding) {
@@ -1669,6 +1727,16 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         signal: flow.controller.signal,
       })
 
+      const identity = await resolveGitHubOAuthIdentity(credentials.refresh, {
+        signal: flow.controller.signal,
+      })
+      const hasUsableIdentity = !!(
+        identity?.account?.uuid
+        || identity?.account?.emailAddress
+        || identity?.organization?.uuid
+        || identity?.organization?.name
+      )
+
       // Store the full OAuth credential:
       // - accessToken = Copilot API token (contains proxy-ep for correct endpoint)
       // - refreshToken = GitHub access token (used to refresh the Copilot token)
@@ -1730,6 +1798,35 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           } catch (error) {
             await restorePreviousCredential()
             throw error
+          }
+
+          if (connection) {
+            if (hasUsableIdentity) {
+              try {
+                const identityUpdated = updateLlmConnection(connectionSlug, {
+                  oauthAccountUuid: identity?.account?.uuid,
+                  oauthAccountEmail: identity?.account?.emailAddress,
+                  oauthOrganizationUuid: identity?.organization?.uuid,
+                  oauthOrganizationName: identity?.organization?.name,
+                  oauthProfileVerifiedAt: Date.now(),
+                })
+                if (!identityUpdated) {
+                  throw new Error(`Connection ${connectionSlug} no longer exists`)
+                }
+              } catch (identityError) {
+                deps.platform.logger?.warn(
+                  `[GitHub Copilot OAuth] Identity persistence failed for ${connectionSlug}: ${identityError instanceof Error ? identityError.message : identityError}`,
+                )
+              }
+            }
+          } else {
+            pendingCopilotIdentities.set(connectionSlug, {
+              identity,
+              ownerClientId: ctx.clientId,
+              oauthEpoch: flow.oauthEpoch,
+              slugGeneration: flow.slugGeneration,
+              createdAt: Date.now(),
+            })
           }
           return activated
         })
@@ -1800,9 +1897,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
     advanceCopilotOAuthStartGeneration(connectionSlug)
     revokeLlmCredentials(connectionSlug)
-    const pending = copilotOAuthAborts.get(connectionSlug)
-    pending?.controller.abort()
-    copilotOAuthAborts.delete(connectionSlug)
+    clearCopilotOAuthStateForSlug(connectionSlug)
     let runtimeInvalidation: Promise<void> | undefined
     try {
       const result = await withLlmConnectionMutation(connectionSlug, async () => {

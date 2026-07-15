@@ -61,13 +61,26 @@ function isolatedPaths() {
         oauthOrganizationUuid: 'sibling-workspace',
         oauthProfileVerifiedAt: 2,
       },
+      {
+        slug: 'github-copilot',
+        name: 'GitHub Copilot',
+        providerType: 'pi',
+        authType: 'oauth',
+        piAuthProvider: 'github-copilot',
+        createdAt: 1,
+        oauthAccountUuid: 'old-github-user',
+        oauthAccountEmail: '@old-github-login',
+        oauthOrganizationUuid: 'old-github-org',
+        oauthOrganizationName: 'Old GitHub Org',
+        oauthProfileVerifiedAt: 3,
+      },
     ],
   }))
 
   return { root, configDir, homeDir, workspaceRoot, configPath }
 }
 
-describe('PiAgent ChatGPT identity refresh', () => {
+describe('PiAgent OAuth identity refresh', () => {
   it('re-stamps only the bound slug and preserves identity when refresh omits id_token', () => {
     const isolated = isolatedPaths()
     try {
@@ -317,7 +330,7 @@ describe('PiAgent ChatGPT identity refresh', () => {
     }
   })
 
-  it('reactivates the Copilot lifecycle after an explicit relogin', () => {
+  it('reactivates Copilot and re-stamps its GitHub identity after refresh', () => {
     const isolated = isolatedPaths()
     try {
       const runner = `
@@ -329,6 +342,20 @@ describe('PiAgent ChatGPT identity refresh', () => {
             expires: Date.now() + 3600000,
           }),
         }))
+
+        globalThis.fetch = async url => {
+          if (String(url) === 'https://api.github.com/user') {
+            return Response.json({
+              id: 4242,
+              login: 'copilot-builder',
+              email: null,
+            })
+          }
+          if (String(url) === 'https://api.github.com/users/copilot-builder/orgs?per_page=1') {
+            return Response.json([{ id: 7171, login: 'nexus-labs' }])
+          }
+          throw new Error('Unexpected GitHub identity URL: ' + url)
+        }
 
         const {
           activateLlmOAuthCredentials,
@@ -367,10 +394,19 @@ describe('PiAgent ChatGPT identity refresh', () => {
 
         await agent.refreshAndPushTokens()
         const credentials = await manager.getLlmOAuth('github-copilot')
+        const config = JSON.parse(await Bun.file(${JSON.stringify(isolated.configPath)}).text())
+        const connection = config.llmConnections.find(candidate => candidate.slug === 'github-copilot')
         agent.destroy()
         console.log(JSON.stringify({
           refreshedAccessStored: credentials?.accessToken === 'copilot-refreshed-access',
           refreshedRefreshStored: credentials?.refreshToken === 'copilot-refreshed-refresh',
+          identity: {
+            accountUuid: connection.oauthAccountUuid,
+            accountLabel: connection.oauthAccountEmail,
+            organizationUuid: connection.oauthOrganizationUuid,
+            organizationName: connection.oauthOrganizationName,
+            timestampAdvanced: connection.oauthProfileVerifiedAt > 3,
+          },
         }))
       `
 
@@ -392,6 +428,13 @@ describe('PiAgent ChatGPT identity refresh', () => {
       expect(JSON.parse(run.stdout.toString().trim())).toEqual({
         refreshedAccessStored: true,
         refreshedRefreshStored: true,
+        identity: {
+          accountUuid: '4242',
+          accountLabel: '@copilot-builder',
+          organizationUuid: '7171',
+          organizationName: 'nexus-labs',
+          timestampAdvanced: true,
+        },
       })
     } finally {
       rmSync(isolated.root, { recursive: true, force: true })
@@ -417,6 +460,10 @@ describe('PiAgent ChatGPT identity refresh', () => {
             }
           },
         }))
+
+        globalThis.fetch = async () => {
+          throw new Error('stale Copilot refresh must not perform identity lookup')
+        }
 
         const {
           getCredentialManager,

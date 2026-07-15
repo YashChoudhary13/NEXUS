@@ -3,9 +3,10 @@
 > **The single most important file for an agent starting cold.** Keep it truthful and current.
 > Update after every task (ritual in [`README.md`](./README.md)).
 
-- **Last updated:** 2026-07-15
+- **Last updated:** 2026-07-16
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `feature/account-identity` in an isolated worktree, cut from `develop`; the
+- **Branch:** `feature/copilot-identity` in an isolated worktree, stacked on the verified
+  PR-1A commit because PR-1F consumes its provider-neutral identity/lifecycle plumbing; the
   preceding `spike/s1-multi-codex` branch remains throwaway and will never be merged.
   `upstream` push URL is **DISABLED** (safety).
 - **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 plan signed off 2026-07-14 (D-020…D-023) —
@@ -14,8 +15,12 @@
   engineering gate and **PR-1A is implemented + locally verified and open as
   [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1); review/merge is pending**.
   All five PR-1A review threads are addressed on the feature branch (four repairs plus one
-  documented concurrency rationale) and the result is verified;
-  PR-1B through PR-1F remain unimplemented.
+  documented concurrency rationale) and the result is verified. **PR-1B, PR-1C, and PR-1D
+  are published as draft PRs [#2](https://github.com/YashChoudhary13/NEXUS/pull/2),
+  [#3](https://github.com/YashChoudhary13/NEXUS/pull/3), and
+  [#4](https://github.com/YashChoudhary13/NEXUS/pull/4). PR-1F is locally verified and being
+  published as a clean stack on PR-1A; PR-1E is locally verified and remains to publish.**
+  Final integration and owner acceptance remain.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
@@ -30,8 +35,11 @@ built-in validations, per-principal chats, and clean-restart restoration of both
 connections/sessions passed. The observed users share one selected runtime workspace, so the
 overall “two different subscriptions” billing criterion remains `[OPEN]` for the phase gate.
 **PR-1A provider-neutral identity capture is complete on its feature branch and open as
-[GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) against `develop`. The overall
-Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance criterion remain.**
+[GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1) against `develop`. PR-1B,
+PR-1C, and PR-1D are published as draft PRs #2–#4. PR-1F and PR-1E are locally complete and
+regression-gated in their own worktrees. The overall Phase 1 is not complete: stacked PR
+publication, integration/review/merge, the final user matrix, and the open billing acceptance
+criterion remain.**
 
 ## Done ✅
 
@@ -69,16 +77,28 @@ Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance cri
   focused tests / 427 assertions**, full shared **3,017 pass / 12 skip / 0 fail / 5,715
   assertions**, shared/server-core/Electron typechecks, changed-file shared lint, and the complete
   Electron build all pass; only the documented inherited build warnings remain.
+- **2026-07-15:** PR-1F implemented on `feature/copilot-identity`: GitHub Copilot OAuth now
+  resolves the stable GitHub user id, public email or verified `@login`, and first public
+  organization without requesting broader scopes. Existing-row reauth persists the identity
+  directly; first login uses a short-lived client/slug/generation-bound server receipt until
+  setup creates the row. GitHub lookup failure, malformed data, timeout, or missing email can
+  never fail authentication, and token refresh re-stamps the exact slug while preserving the
+  last verified profile on lookup failure. Verification: focused **40 pass / 93 assertions**;
+  full account gate **110 pass / 469 assertions** across its three commands; full shared
+  **108 pass / 227 assertions**; changed-file lint, relevant typechecks, diff hygiene, and the
+  complete Electron production build pass. An isolated built-app smoke rendered
+  `Copilot Builder · @copilot-builder · nexus-labs` in Settings → AI without real credentials.
 
 ## Next up ⏭️ (in order)
 
-1. **Review and merge [PR-1A provider-neutral identity capture](https://github.com/YashChoudhary13/NEXUS/pull/1)**
-   from `feature/account-identity` into `develop`; then continue PR-1B → 1C/1D/1F → 1E per
-   [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
-   Branches off `develop`, PRs → `develop` (D-023).
-2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
+1. Publish PR-1F as a reviewable stack on PR-1A and PR-1E as a reviewable stack on PR-1D;
+   retarget each to `develop` after its dependency lands.
+2. Assemble the complete Phase 1 integration candidate, rerun the regression matrix, and run
+   the owner real-account/restart acceptance matrix.
+3. Review/merge all Phase 1 PRs into `develop` (D-023).
+4. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
    explicit go-ahead. Runs on its own branch, parallel to Phase 1.
-3. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
+5. Then: memory foundation → Phase 2 Swarm → Phase 3 Brain, per the roadmap.
 
 ## Blockers / owner input needed
 
@@ -101,6 +121,21 @@ Phase 1 is not complete; PR-1B through PR-1F and the open billing acceptance cri
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-16 — GitHub publication resumed; PR-1B/1C/1D opened as drafts.** Authenticated
+  GitHub CLI is available. Commits `e55c9e5`, `5c017c7`, and `9ea7d0a` were pushed to the fork
+  and opened as draft PRs #2, #3, and #4 against `develop`; root `main` stayed untouched.
+  PR-1F is intentionally stacked on PR-1A for a one-concern review and will be retargeted after
+  PR #1 lands; PR-1E will use the same strategy on PR-1D.
+- **2026-07-15 — PR-1F Copilot identity implemented and regression-gated locally.** The Pi
+  device flow's durable GitHub token now drives fail-soft `/user` and public-organization
+  lookup. Private email falls back to the provider-verified `@login`; no broader OAuth scope,
+  stored field, or credential format was added. Identity is server-owned across first setup,
+  reauth, refresh, logout, delete, stale-flow races, and renderer forgery attempts. Pinned-Bun
+  gates: 40 focused tests / 93 assertions, 110 account-gate tests / 469 assertions, 108 shared
+  tests / 227 assertions, relevant typechecks, changed-file lint, complete Electron build, and
+  isolated built-app row smoke all pass. Root-wide `typecheck:all` retains only the reproduced
+  stripped-OSS `tsconfig.base.json` failures. Publication is paused because `gh` is absent;
+  PR-1E is the remaining implementation slice.
 - **2026-07-15 — PR-1A review findings repaired and regression-gated.** OAuth refresh
   rollback and invalid-token cleanup now delete only `llm_oauth::{connectionSlug}` rather than
   every credential type for that slug. A manager-level regression preserves API-key, IAM, and
