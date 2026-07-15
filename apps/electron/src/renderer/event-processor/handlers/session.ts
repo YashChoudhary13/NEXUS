@@ -43,7 +43,7 @@ import type {
   UsageUpdateEvent,
   Effect,
 } from '../types'
-import type { Message } from '../../../shared/types'
+import type { Message, Session } from '../../../shared/types'
 import { generateMessageId, appendMessage } from '../helpers'
 
 /**
@@ -703,9 +703,23 @@ export function handleSessionMetadataChanged(
   event: SessionMetadataChangedEvent
 ): ProcessResult {
   const { session, streaming } = state
+  const {
+    continuedFromSessionId,
+    continuedToSessionIds,
+    ...otherChanges
+  } = event.changes
+  const normalizedChanges: Partial<Session> = {
+    ...otherChanges,
+    ...(continuedFromSessionId !== undefined
+      ? { continuedFromSessionId: continuedFromSessionId ?? undefined }
+      : {}),
+    ...(continuedToSessionIds !== undefined
+      ? { continuedToSessionIds: continuedToSessionIds ?? undefined }
+      : {}),
+  }
   return {
     state: {
-      session: { ...session, ...event.changes },
+      session: { ...session, ...normalizedChanges },
       streaming,
     },
     effects: [],
@@ -988,4 +1002,3 @@ export function handleUsageUpdate(
     effects: [],
   }
 }
-

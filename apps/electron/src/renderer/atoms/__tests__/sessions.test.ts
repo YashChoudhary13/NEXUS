@@ -11,6 +11,7 @@ import {
   refreshSessionsMetadataAtom,
   initializeSessionsAtom,
   replaceLoadedSessionAtom,
+  addSessionAtom,
 } from '../sessions'
 
 function msg(id: string, role: Message['role'] = 'user'): Message {
@@ -43,6 +44,17 @@ describe('session message loading atoms', () => {
       // @ts-expect-error test cleanup for window shim
       delete globalThis.window
     }
+  })
+
+  it('does not duplicate a session ID when lifecycle hydration races a direct add', () => {
+    const store = createStore()
+    const session = makeSession({ id: 'handoff-child' })
+
+    store.set(addSessionAtom, session)
+    store.set(addSessionAtom, session)
+
+    expect(store.get(sessionIdsAtom).filter(id => id === session.id)).toHaveLength(1)
+    expect(store.get(sessionMetaMapAtom).get(session.id)?.id).toBe(session.id)
   })
 
   it('replaceLoadedSessionAtom marks authoritative full sessions as loaded', () => {

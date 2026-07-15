@@ -61,10 +61,135 @@ shutdown (exit 0). One benign fresh-state error line: `No LLM connection found f
 tool-icons/permissions were created in the scratch dir — but the auto-created default
 workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-workspace`
 (tilde path stored in config.json), and window-state/logs/docs syncs also touched
-`~/.craft-agent`. A smoke run therefore writes a skeleton workspace (+ scheduler-tick lines in
-`events.jsonl`) into the real home config dir even when `CRAFT_CONFIG_DIR` points elsewhere.
-Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
-behavior — documented, not fixed; candidate note for the repo-health workstream.)
+`~/.craft-agent`. The encrypted credential backend likewise hardcodes
+`~/.craft-agent/credentials.enc` (`packages/shared/src/credentials/backends/secure-storage.ts`),
+so OAuth/API credentials are **not isolated at all** by `CRAFT_CONFIG_DIR`; a scratch instance
+using a production slug can overwrite that slug's real credential. A smoke run therefore
+writes a skeleton workspace (+ scheduler-tick lines in `events.jsonl`) and credentialed flows
+write the real encrypted store even when `CRAFT_CONFIG_DIR` points elsewhere. Treat
+`CRAFT_CONFIG_DIR` as isolating *global config only*, not workspace data or credentials.
+(Upstream behavior — documented, not fixed; candidate note for the repo-health workstream.)
+
+## Phase 1 PR-1A verification (2026-07-15)
+
+All commands below ran in the isolated `feature/account-identity` worktree with the CI-pinned
+Bun 1.3.10 first on `PATH` (`PATH=/tmp/nexus-bun-1.3.10/bin:$PATH`).
+
+| Command | Exit | Result |
+|---------|------|--------|
+| `bun run test:account-identity` | 0 | ✅ 96 pass / 0 fail / 420 assertions, isolated failed-refresh cleanup 1 pass / 0 fail / 2 assertions, then exact-slug runtime invalidation 1 pass / 0 fail / 5 assertions |
+| `cd packages/shared && bun test` | 0 | ✅ 3,017 pass / 0 fail / 12 skip / 5,715 assertions |
+| `bun test packages/server-core/src` | 1 | ⚠️ 206 pass / 1 inherited order-dependent failure; clean `develop` fails the same test with 196 pass / 1 fail |
+| `bun run typecheck:shared` | 0 | ✅ clean |
+| `cd packages/server-core && bun run typecheck` | 0 | ✅ clean |
+| `bun run typecheck:electron` | 0 | ✅ clean |
+| `bun run webui:typecheck` | 0 | ✅ clean |
+| `bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| changed-file `eslint` from `packages/shared` | 0 | ✅ clean |
+| `bun run lint:i18n:parity` | 0 | ✅ 6 locales × 1,639 keys |
+| `bun run lint:i18n:sorted` | 0 | ✅ clean |
+| `git diff --check` | 0 | ✅ clean |
+
+The focused suite covers provider-target helpers, ChatGPT/Copilot/Claude generation races,
+rowless credential cleanup, queued first-time setup versus `updateOnly`, exact runtime
+invalidation, and encrypted-store failure/restart behavior. The complete Electron build retains
+only the known inherited missing-`tsconfig.base.json` warning and Vite chunk-size warnings.
+`typecheck:all` still reaches and fails at the stripped `session-tools-core` `tsconfig.base.json`
+dependency after the earlier package typechecks pass; `lint:i18n:coverage` still points to the
+inherited missing `scripts/check-i18n-coverage.ts`. PR-1A does not mask or reclassify either
+failure. No locale files changed; parity and sorted checks were still rerun and passed.
+
+The full server-core suite's sole failure is also inherited, not introduced by PR-1A:
+`refreshConnectionRuntime > records customModels with the per-model supportsImages flag in the
+IPC payload` assumes a machine-global `slug-A` connection and therefore receives an undefined
+runtime in full-suite order. It passes alone. A detached clean-`develop` worktree reproduced the
+same failure (**196 pass / 1 fail / 417 assertions**); this branch reports **206 pass / 1 fail**
+because PR-1A adds ten passing server tests. The deterministic PR-1A runtime test is run through
+the focused gate.
+
+The real-provider S1 smoke also passed two simultaneous ChatGPT OAuth connections, one locked
+chat per slug, and clean-restart restoration. It proves separate user principals and slug-bound
+credentials/sessions; because both principals selected the same runtime workspace, independently
+billed subscription routing remains `[OPEN]` for the overall Phase 1 acceptance gate.
+
+The 2026-07-15 PR review follow-up added two deletion regressions. The credential-manager test
+proves OAuth-only deletion preserves API-key, IAM, and service-account credentials sharing the
+same connection slug and that persistence failures name the complete credential account. The
+isolated auth-state test drives an `invalid_grant` refresh failure and proves the real cleanup
+path never calls whole-slug deletion. The exact runtime filter still expects both invalidation
+passes: the pre-delete pass begins disposal, while the post-delete pass catches a runtime created
+during credential mutation (required for non-OAuth rows without a credential lifecycle epoch).
+
+## Phase 1 PR-1F verification (2026-07-15)
+
+All CI tests use fabricated GitHub responses; no live GitHub call occurs in automation. The
+Pi SDK source mini-verification confirmed the Copilot device flow requests only `read:user`.
+That scope can read `/user`, but profile email may be private/null; `user:email` would be a
+separate broader scope. PR-1F therefore keeps a public email when present and otherwise stores
+the provider-verified `@login` as the visible account label. Organization enrichment uses only
+the first publicly visible membership from `/users/{login}/orgs` and is always optional.
+
+| Command / check | Exit | Result |
+|-----------------|------|--------|
+| `bun run test:copilot-identity` | 0 | ✅ 40 pass / 0 fail / 93 assertions |
+| `bun run test:account-identity` | 0 | ✅ 108 pass / 462 assertions + isolated cleanup 1 / 2 + exact runtime 1 / 5 = **110 pass / 469 assertions** |
+| `bun run test:shared:all` | 0 | ✅ 108 pass / 0 fail / 227 assertions |
+| core/shared/server-core/server typechecks | 0 | ✅ clean |
+| Electron + UI typechecks | 0 | ✅ clean |
+| `typecheck:all` | 2 | ⚠️ reaches inherited missing `tsconfig.base.json` at `session-tools-core`; reproduced unchanged in PR-1D |
+| changed-file package-local ESLint | 0 | ✅ clean |
+| `git diff --check` | 0 | ✅ clean |
+| `NODE_OPTIONS=--max-old-space-size=8192 bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| isolated built-app Settings → AI smoke | 0 | ✅ `Copilot Builder · @copilot-builder · nexus-labs` rendered; no real credential used |
+
+Coverage includes response parsing, missing/private email, API errors, thrown network errors,
+optional organization failure, request headers, first-login OAuth-before-row receipts, wrong-client
+identity forgery rejection, existing-row reauth, lookup-failure profile preservation, exact-slug
+token refresh re-stamping, and logout/refresh races. The production build retains only the known
+missing-base-config and Vite chunk-size warnings.
+
+## Phase 1 PR-1E verification (2026-07-15)
+
+PR-1E was verified in the isolated `feature/linked-handoff` worktree with the locally verified
+PR-1D picker applied as a temporary dependency layer. All commands used Bun 1.3.10 first on
+`PATH`. The published PR-1E must be rebased onto PR-1D after PR-1D lands.
+
+| Command / check | Exit | Result |
+|-----------------|------|--------|
+| `bun run test:linked-handoff` | 0 | ✅ 24 pass / 0 fail / 1,660 assertions |
+| `bun run test:account-aware-picker` | 0 | ✅ 37 pass / 0 fail / 46 assertions |
+| sessions atom suite | 0 | ✅ 10 pass / 0 fail / 39 assertions |
+| core/shared/server-core/server typechecks | 0 | ✅ clean |
+| Electron + UI typechecks | 0 | ✅ clean |
+| `bun run lint:i18n:parity` | 0 | ✅ 6 translated locales × 1,662 keys each match the English base |
+| `bun run lint:i18n:sorted` | 0 | ✅ clean |
+| `bun run lint:i18n:coverage` | 1 | ⚠️ inherited missing `scripts/check-i18n-coverage.ts` |
+| changed-file Electron ESLint | 0 | ✅ 0 errors / 29 inherited broad-file hook warnings |
+| complete Electron ESLint | 1 | ⚠️ 9 inherited unrelated errors / 124 warnings |
+| `NODE_OPTIONS=--max-old-space-size=8192 bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| final renderer rebuild after header-link patch | 0 | ✅ clean |
+| disposable built-app handoff smoke | 0 | ✅ generated handoff, automatic child navigation, visible summary, repeat continuation, parent/child links |
+
+The handoff gate covers exact target validation; parent flush; child account/model binding before
+first send; parent transcript/provider immutability; hidden one-shot context; visible summary;
+durable bidirectional metadata; repeated continuations; restart persistence fields; renderer
+metadata propagation; rollback; deletion cleanup; and unavailable/busy/error paths. The sessions
+atom regression proves dialog-side child hydration is idempotent when the lifecycle event and RPC
+response arrive in either order.
+
+The desktop smoke used a disposable app bundle/data directory and a credential-free localhost
+OpenAI-compatible stub; it did not touch real credentials. It generated an actual summary and
+created two child sessions. The first smoke exposed a real renderer race: RPC success could
+navigate before the lifecycle event registered the child, leaving the parent route selected.
+Hydrating the child before navigation fixed the race, and a production rebuild verified automatic
+navigation to the child. The same smoke exposed nested interactive header links inside the title
+button; moving them to native sibling header buttons fixed click behavior and kept the repeated
+child `+N` suffix visible when titles truncate.
+
+Full Electron lint remains a baseline debt signal, not a PR-1E gate: all nine errors are in
+unrelated inherited files (`BackgroundFinishedChip`, `FabNewChat`, Kanban components, and
+`ProjectInfoPage`). Changed-file lint has no errors. Locale coverage remains the documented
+stripped-OSS missing-script failure; parity and sorting pass.
 
 ## Phase 1 PR-1D validation (2026-07-15)
 

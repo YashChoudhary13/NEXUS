@@ -2334,11 +2334,11 @@ function MessageBubble({
     const Icon = config.icon
 
     return (
-      <div className={cn('flex items-center gap-2 px-3 py-1 text-[13px] select-none', config.className)}>
-        <div className="w-3 h-3 flex items-center justify-center shrink-0">
+      <div className={cn('flex items-start gap-2 px-3 py-1 text-[13px]', config.className)}>
+        <div className="w-3 h-3 mt-0.5 flex items-center justify-center shrink-0">
           <Icon className="w-3 h-3" />
         </div>
-        <span>{message.content}</span>
+        <span className="whitespace-pre-wrap break-words select-text">{message.content}</span>
       </div>
     )
   }

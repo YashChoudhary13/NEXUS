@@ -34,6 +34,26 @@ export function buildConversationSummaryPrompt(messages: RecoveryMessage[]): str
   );
 }
 
+/**
+ * Build the compact context passed between two agents when a user continues a
+ * session with another account/model. Unlike the generic recovery summary,
+ * this prompt names the concrete implementation state the receiving agent
+ * needs in order to resume work without rediscovering it.
+ */
+export function buildAgentHandoffSummaryPrompt(messages: RecoveryMessage[]): string | null {
+  if (messages.length === 0) return null;
+
+  const transcript = buildConversationSummaryTranscript(messages);
+  if (!transcript) return null;
+
+  return (
+    'Create a concise agent handoff from this conversation. Preserve, when present: ' +
+    'the user\'s current objective, work already completed, recent decisions and their rationale, ' +
+    'remaining tasks, touched files, commands/tests and results, blockers, and current git/worktree state. ' +
+    'Use factual bullets or short sections. Do not invent missing details.\n\n' + transcript
+  );
+}
+
 export async function generateConversationSummary(
   messages: RecoveryMessage[],
   runMiniCompletion: (prompt: string) => Promise<string | null>,
@@ -43,6 +63,15 @@ export async function generateConversationSummary(
   return runMiniCompletion(prompt);
 }
 
+export async function generateAgentHandoffSummary(
+  messages: RecoveryMessage[],
+  runMiniCompletion: (prompt: string) => Promise<string | null>,
+): Promise<string | null> {
+  const prompt = buildAgentHandoffSummaryPrompt(messages);
+  if (!prompt) return null;
+  return runMiniCompletion(prompt);
+}
+
 export function buildTransferredSessionContext(summary: string): string {
-  return `<session_transfer_summary>\nThis session was transferred from another workspace. The original conversation was summarized before transfer.\nUse the summary below as prior context for the next turn.\n\n${summary}\n</session_transfer_summary>`;
+  return `<session_transfer_summary>\nThis session continues from another session. The prior conversation was summarized before handoff.\nUse the summary below as prior context for the next turn.\n\n${summary}\n</session_transfer_summary>`;
 }

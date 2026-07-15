@@ -1,9 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test'
 
 import {
+  buildAgentHandoffSummaryPrompt,
   buildConversationSummaryPrompt,
   buildConversationSummaryTranscript,
   buildTransferredSessionContext,
+  generateAgentHandoffSummary,
   generateConversationSummary,
 } from '../conversation-summary.ts'
 
@@ -46,9 +48,37 @@ describe('conversation-summary helpers', () => {
     expect(runMiniCompletion).toHaveBeenCalledTimes(1)
   })
 
+  it('asks handoff summaries to preserve implementation and git state without invention', () => {
+    const prompt = buildAgentHandoffSummaryPrompt([
+      { type: 'user', content: 'Finish Phase 1 and keep the parent session unchanged.' },
+      { type: 'assistant', content: 'Updated SessionManager.ts and ran the focused tests.' },
+    ])
+
+    expect(prompt).toContain("the user's current objective")
+    expect(prompt).toContain('recent decisions and their rationale')
+    expect(prompt).toContain('touched files')
+    expect(prompt).toContain('commands/tests and results')
+    expect(prompt).toContain('current git/worktree state')
+    expect(prompt).toContain('Do not invent missing details')
+  })
+
+  it('delegates agent handoff generation to the provided mini completion callback', async () => {
+    const runMiniCompletion = mock(async (prompt: string) => {
+      expect(prompt).toContain('Create a concise agent handoff')
+      return 'Objective: finish Phase 1'
+    })
+
+    const result = await generateAgentHandoffSummary([
+      { type: 'user', content: 'Finish Phase 1' },
+    ], runMiniCompletion)
+
+    expect(result).toBe('Objective: finish Phase 1')
+    expect(runMiniCompletion).toHaveBeenCalledTimes(1)
+  })
+
   it('formats transferred-session context as a hidden one-shot block', () => {
     expect(buildTransferredSessionContext('Keep the remote workspace aligned.')).toBe(`<session_transfer_summary>
-This session was transferred from another workspace. The original conversation was summarized before transfer.
+This session continues from another session. The prior conversation was summarized before handoff.
 Use the summary below as prior context for the next turn.
 
 Keep the remote workspace aligned.

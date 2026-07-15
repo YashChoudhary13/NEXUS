@@ -3,6 +3,7 @@ import {
   type LlmConnection,
 } from '@config/llm-connections'
 import { getProviderMetadata } from '@config/provider-metadata'
+import { ANTHROPIC_MODELS } from '@config/models'
 
 /**
  * Format token count for display (e.g., 1500 -> "1.5k", 200000 -> "200k").
@@ -157,4 +158,57 @@ export function groupConnectionsByProviderAccount<T extends LlmConnection>(
   return [...groups.values()]
     .sort((a, b) => a.order - b.order)
     .map(({ order: _order, ...group }) => group)
+}
+
+export interface ConnectionModelOption {
+  id: string
+  name: string
+}
+
+/** Prefer a different authenticated account for “continue with another agent”. */
+export function chooseInitialHandoffConnection<
+  T extends LlmConnection & { isAuthenticated: boolean; isDefault?: boolean },
+>(connections: readonly T[], currentConnection?: string): T | undefined {
+  const authenticated = connections.filter(connection => connection.isAuthenticated)
+  return authenticated.find(connection => connection.slug !== currentConnection && connection.isDefault)
+    ?? authenticated.find(connection => connection.slug !== currentConnection)
+    ?? authenticated.find(connection => connection.slug === currentConnection)
+    ?? authenticated[0]
+}
+
+/**
+ * Normalize a connection's string/object model list for small account/model
+ * pickers such as linked handoff. The persisted default remains selectable
+ * even when a stale provider sync omitted it from `models`.
+ */
+export function getConnectionModelOptions(
+  connection: LlmConnection,
+): ConnectionModelOption[] {
+  const source = connection.models?.length ? connection.models : ANTHROPIC_MODELS
+  const byId = new Map<string, ConnectionModelOption>()
+
+  for (const model of source) {
+    const id = typeof model === 'string' ? model : model.id
+    byId.set(id, {
+      id,
+      name: typeof model === 'string'
+        ? stripPiPrefixForDisplay(model)
+        : (model.name ?? stripPiPrefixForDisplay(model.id)),
+    })
+  }
+
+  if (connection.defaultModel && !byId.has(connection.defaultModel)) {
+    byId.set(connection.defaultModel, {
+      id: connection.defaultModel,
+      name: stripPiPrefixForDisplay(connection.defaultModel),
+    })
+  }
+
+  const options = [...byId.values()]
+  if (!connection.defaultModel) return options
+  return options.sort((a, b) => {
+    if (a.id === connection.defaultModel) return -1
+    if (b.id === connection.defaultModel) return 1
+    return 0
+  })
 }

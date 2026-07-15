@@ -77,6 +77,10 @@ export interface SessionMeta {
   archivedAt?: number
   /** Workspace-scoped project id this session is bound to (undefined = unbound) */
   projectId?: string
+  /** Parent session whose generated handoff starts this session. */
+  continuedFromSessionId?: string
+  /** Sessions that were continued from this session (oldest to newest). */
+  continuedToSessionIds?: string[]
   /** Parent session id — when set, this session is a subtask of the parent (undefined = top-level task) */
   parentSessionId?: string
   /** Kanban board column id ('todo' | 'in-progress' | 'done'); independent of sessionStatus */
@@ -437,7 +441,9 @@ export const addSessionAtom = atom(
 
     // Add to beginning of IDs list
     const ids = get(sessionIdsAtom)
-    set(sessionIdsAtom, [session.id, ...ids])
+    if (!ids.includes(session.id)) {
+      set(sessionIdsAtom, [session.id, ...ids])
+    }
 
     // Mark as loaded (new sessions are complete - no lazy loading needed)
     const loadedSessions = get(loadedSessionsAtom)
