@@ -210,6 +210,7 @@ import type {
   McpToolsResult,
   GitBashStatus,
   ClaudeOAuthResult,
+  ChatGptOAuthResult,
   UpdateInfo,
   WorkspaceSettings,
   PermissionModeState,
@@ -415,7 +416,7 @@ export interface ElectronAPI {
   getSetupNeeds(): Promise<SetupNeeds>
   startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { clientId?: string }>
   // Claude OAuth (two-step flow)
-  startClaudeOAuth(): Promise<{ success: boolean; authUrl?: string; error?: string }>
+  startClaudeOAuth(connectionSlug: string): Promise<{ success: boolean; authUrl?: string; error?: string }>
   exchangeClaudeCode(code: string, connectionSlug: string): Promise<ClaudeOAuthResult>
   hasClaudeOAuthState(): Promise<boolean>
   clearClaudeOAuthState(): Promise<{ success: boolean }>
@@ -423,7 +424,7 @@ export interface ElectronAPI {
   deferSetup(): Promise<{ success: boolean }>
 
   // ChatGPT OAuth (for Codex chatgptAuthTokens mode)
-  startChatGptOAuth(connectionSlug: string): Promise<{ success: boolean; error?: string }>
+  startChatGptOAuth(connectionSlug: string): Promise<ChatGptOAuthResult>
   cancelChatGptOAuth(): Promise<{ success: boolean }>
   getChatGptAuthStatus(connectionSlug: string): Promise<{ authenticated: boolean; expiresAt?: number; hasRefreshToken?: boolean }>
   chatGptLogout(connectionSlug: string): Promise<{ success: boolean }>

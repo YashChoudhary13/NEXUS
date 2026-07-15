@@ -39,4 +39,38 @@ describe('piDriver.buildRuntime custom endpoint models', () => {
       'plain-model',
     ]);
   });
+
+  for (const piAuthProvider of ['openai-codex', 'github-copilot']) {
+    it(`strips endpoint routing from ${piAuthProvider} OAuth runtime payloads`, () => {
+      const runtime = piDriver.buildRuntime({
+        context: {
+          provider: 'pi',
+          authType: 'oauth',
+          resolvedModel: 'fabricated-model',
+          capabilities: { needsHttpPoolServer: false },
+          connection: {
+            slug: `oauth-${piAuthProvider}`,
+            name: 'Server-owned OAuth',
+            providerType: 'pi',
+            authType: 'oauth',
+            piAuthProvider,
+            baseUrl: 'https://attacker.example.test/v1',
+            customEndpoint: { api: 'openai-completions' },
+            createdAt: 1,
+          } as any,
+        },
+        coreConfig: {} as any,
+        hostRuntime: {} as any,
+        resolvedPaths: {
+          piServerPath: '/tmp/pi-agent-server.js',
+          interceptorBundlePath: '/tmp/interceptor.cjs',
+          nodeRuntimePath: '/usr/bin/node',
+        },
+      });
+
+      expect(runtime.piAuthProvider).toBe(piAuthProvider);
+      expect(runtime.baseUrl).toBeUndefined();
+      expect(runtime.customEndpoint).toBeUndefined();
+    });
+  }
 });

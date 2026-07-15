@@ -36,7 +36,7 @@ import {
 import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@craft-agent/server-core/transport'
 import type { RpcClient } from '@craft-agent/server-core/transport'
 import type { RemoteServerConfig } from '@craft-agent/core/types'
-import type { ElectronAPI } from '../shared/types'
+import type { ChatGptOAuthResult, ElectronAPI } from '../shared/types'
 
 // ---------------------------------------------------------------------------
 // Client interface — common surface for both RoutedClient and WsRpcClient
@@ -332,13 +332,13 @@ client.onConnectionStateChanged((state) => {
 // Override the channel-map stub: the server now returns authUrl without opening
 // the browser. We open it locally so it works in remote mode.
 // Claude OAuth is two-step: browser opens → user copies code → pastes in UI.
-;(api as any).startClaudeOAuth = async (): Promise<{
+;(api as any).startClaudeOAuth = async (connectionSlug: string): Promise<{
   success: boolean
   authUrl?: string
   error?: string
 }> => {
   try {
-    const result = await client.invoke('onboarding:startClaudeOAuth')
+    const result = await client.invoke('onboarding:startClaudeOAuth', connectionSlug)
     if (result.success && result.authUrl) {
       await shell.openExternal(result.authUrl)
     }
@@ -357,7 +357,7 @@ client.onConnectionStateChanged((state) => {
 // Overrides the startChatGptOAuth API method so the renderer call is unchanged.
 ;(api as any).startChatGptOAuth = async (
   connectionSlug: string,
-): Promise<{ success: boolean; error?: string }> => {
+): Promise<ChatGptOAuthResult> => {
   let callbackServer: Awaited<ReturnType<typeof createCallbackServer>> | null = null
   let flowId: string | undefined
   let state: string | undefined

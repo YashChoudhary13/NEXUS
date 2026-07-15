@@ -23,6 +23,7 @@
  */
 
 export { CredentialManager, getCredentialManager } from './manager.ts';
+export * from './llm-credential-lifecycle.ts';
 export type { CredentialId, CredentialType, StoredCredential } from './types.ts';
 export { credentialIdToAccount, accountToCredentialId, SOURCE_CREDENTIAL_TYPES } from './types.ts';
 export type { CredentialBackend } from './backends/types.ts';

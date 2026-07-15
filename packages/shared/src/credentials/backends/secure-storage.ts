@@ -32,7 +32,17 @@ import {
   createHash,
 } from 'crypto';
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { hostname, userInfo, homedir } from 'os';
 import { join, dirname } from 'path';
 
@@ -112,9 +122,30 @@ export class SecureStorageBackend implements CredentialBackend {
   readonly name = 'secure-storage';
   readonly priority = 100;
 
+  // The encrypted file is one whole-store document shared by every slug. A
+  // per-slug lock cannot prevent stale cross-slug snapshots from overwriting
+  // each other, so all async mutations serialize process-wide.
+  private static mutationQueue: Promise<void> = Promise.resolve();
+  private static mutationVersion = 0;
+  private static pendingAsyncMutations = 0;
+
   private cachedStore: CredentialStore | null = null;
   private encryptionKey: Buffer | null = null;
   private salt: Buffer | null = null;
+  private loadedMutationVersion = -1;
+
+  private static async withMutation<T>(operation: () => T): Promise<T> {
+    SecureStorageBackend.pendingAsyncMutations += 1;
+    const previous = SecureStorageBackend.mutationQueue;
+    const run = previous.catch(() => undefined).then(operation);
+    const tracked = run.then(() => undefined, () => undefined);
+    SecureStorageBackend.mutationQueue = tracked;
+    try {
+      return await run;
+    } finally {
+      SecureStorageBackend.pendingAsyncMutations -= 1;
+    }
+  }
 
   async isAvailable(): Promise<boolean> {
     // File backend is always available - we can always write to filesystem
@@ -130,42 +161,61 @@ export class SecureStorageBackend implements CredentialBackend {
   }
 
   async set(id: CredentialId, credential: StoredCredential): Promise<void> {
-    let store = await this.loadStore();
+    await SecureStorageBackend.withMutation(() => {
+      const store = this.loadStoreSync();
+      const nextStore: CredentialStore = store
+        ? {
+            ...store,
+            credentials: { ...store.credentials },
+            metadata: { ...store.metadata },
+          }
+        : {
+          version: 1,
+          credentials: {},
+          metadata: {
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        };
 
-    if (!store) {
-      // Initialize new store
-      store = {
-        version: 1,
-        credentials: {},
-        metadata: {
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      };
-    }
+      const key = credentialIdToAccount(id);
+      nextStore.credentials[key] = credential;
+      nextStore.metadata.updatedAt = Date.now();
 
-    const key = credentialIdToAccount(id);
-    store.credentials[key] = credential;
-    store.metadata.updatedAt = Date.now();
-
-    await this.saveStore(store);
+      // Mutate the in-memory cache only after the encrypted file write succeeds.
+      this.saveStoreSync(nextStore);
+    });
   }
 
   async delete(id: CredentialId): Promise<boolean> {
-    return this.deleteSync(id);
+    return SecureStorageBackend.withMutation(() => this.deleteSyncUnlocked(id));
   }
 
   deleteSync(id: CredentialId): boolean {
+    if (SecureStorageBackend.pendingAsyncMutations > 0) {
+      throw new Error('Cannot synchronously delete credentials while an async store mutation is pending');
+    }
+    return this.deleteSyncUnlocked(id);
+  }
+
+  private deleteSyncUnlocked(id: CredentialId): boolean {
     const store = this.loadStoreSync();
     if (!store) return false;
 
     const key = credentialIdToAccount(id);
     if (!(key in store.credentials)) return false;
 
-    delete store.credentials[key];
-    store.metadata.updatedAt = Date.now();
+    const nextStore: CredentialStore = {
+      ...store,
+      credentials: { ...store.credentials },
+      metadata: { ...store.metadata, updatedAt: Date.now() },
+    };
+    delete nextStore.credentials[key];
 
-    this.saveStoreSync(store);
+    // Keep the cached credential intact if persistence fails. Callers can then
+    // surface a real logout failure and retry instead of claiming success while
+    // the old encrypted token remains on disk.
+    this.saveStoreSync(nextStore);
     return true;
   }
 
@@ -197,15 +247,29 @@ export class SecureStorageBackend implements CredentialBackend {
 
   private loadStoreSync(): CredentialStore | null {
     // Return cached store if available
-    if (this.cachedStore) return this.cachedStore;
+    if (
+      this.cachedStore
+      && this.loadedMutationVersion === SecureStorageBackend.mutationVersion
+    ) return this.cachedStore;
+
+    // Another backend instance may have committed the shared file.
+    if (this.loadedMutationVersion !== SecureStorageBackend.mutationVersion) {
+      this.cachedStore = null;
+      this.salt = null;
+      this.encryptionKey = null;
+    }
 
     if (!existsSync(CREDENTIALS_FILE)) return null;
 
     let fileData: Buffer;
     try {
       fileData = readFileSync(CREDENTIALS_FILE);
-    } catch {
-      return null;
+    } catch (error) {
+      // A missing file is an empty first-run store. Permission/I/O failures on
+      // an existing whole-store snapshot must propagate; treating them as
+      // empty would let the next mutation atomically erase every credential.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
 
     // Validate minimum size
@@ -235,6 +299,7 @@ export class SecureStorageBackend implements CredentialBackend {
 
     if (store) {
       this.cachedStore = store;
+      this.loadedMutationVersion = SecureStorageBackend.mutationVersion;
       return store;
     }
 
@@ -311,8 +376,46 @@ export class SecureStorageBackend implements CredentialBackend {
     // Combine all parts
     const fileData = Buffer.concat([header, iv, authTag, ciphertext]);
 
-    // Write with restrictive permissions (owner read/write only)
-    writeFileSync(CREDENTIALS_FILE, fileData, { mode: 0o600 });
+    // Never open the only durable snapshot with truncation semantics. Write a
+    // same-directory 0600 temp file, flush it, then atomically replace the
+    // target. A short write, ENOSPC, or process failure leaves the prior store
+    // readable on restart.
+    const tempFile = join(
+      CREDENTIALS_DIR,
+      `.credentials.enc.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,
+    );
+    try {
+      writeFileSync(tempFile, fileData, { mode: 0o600, flag: 'wx' });
+      const tempFd = openSync(tempFile, 'r');
+      try {
+        fsyncSync(tempFd);
+      } finally {
+        closeSync(tempFd);
+      }
+      renameSync(tempFile, CREDENTIALS_FILE);
+
+      // Best-effort directory flush makes the rename durable across power loss
+      // where the platform permits fsync on directory descriptors.
+      try {
+        const directoryFd = openSync(CREDENTIALS_DIR, 'r');
+        try {
+          fsyncSync(directoryFd);
+        } finally {
+          closeSync(directoryFd);
+        }
+      } catch {
+        // Some platforms (notably Windows) do not allow directory fsync.
+      }
+    } catch (error) {
+      try {
+        if (existsSync(tempFile)) unlinkSync(tempFile);
+      } catch {
+        // Preserve the original persistence failure.
+      }
+      throw error;
+    }
+    SecureStorageBackend.mutationVersion += 1;
+    this.loadedMutationVersion = SecureStorageBackend.mutationVersion;
     this.cachedStore = store;
   }
 
@@ -358,6 +461,8 @@ export class SecureStorageBackend implements CredentialBackend {
     }
     this.cachedStore = null;
     this.encryptionKey = null;
+    SecureStorageBackend.mutationVersion += 1;
+    this.loadedMutationVersion = SecureStorageBackend.mutationVersion;
     this.salt = null;
   }
 

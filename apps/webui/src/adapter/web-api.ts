@@ -297,10 +297,10 @@ export function createWebApi(options: WebApiOptions): {
 
     // Claude OAuth — server returns authUrl, we open it in a new tab.
     // Same iOS-safe pre-open pattern as `performOAuth` above.
-    startClaudeOAuth: async () => {
+    startClaudeOAuth: async (connectionSlug: string) => {
       const popup = window.open('about:blank', '_blank')
       try {
-        const result = await client.invoke('onboarding:startClaudeOAuth')
+        const result = await client.invoke('onboarding:startClaudeOAuth', connectionSlug)
         if (result.success && result.authUrl) {
           if (popup && !popup.closed) {
             popup.location.href = result.authUrl

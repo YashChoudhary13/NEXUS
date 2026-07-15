@@ -11,12 +11,18 @@
  * our native OAuth flow. This is a one-time migration.
  */
 
-import { getCredentialManager } from '../credentials/index.ts';
+import {
+  captureLlmCredentialRefreshEpoch,
+  getCredentialManager,
+  isLlmCredentialRefreshCurrent,
+  withLlmCredentialCommit,
+} from '../credentials/index.ts';
 import {
   loadStoredConfig,
   getActiveWorkspace,
   getDefaultLlmConnection,
   getLlmConnection,
+  getLlmConnections,
   type AuthType,
   type Workspace,
 } from '../config/storage.ts';
@@ -97,6 +103,28 @@ export interface SetupNeeds {
 // When a refresh is in progress, other callers wait for it to complete
 let refreshInProgress: Promise<TokenResult> | null = null;
 
+async function getClaudeOAuthCredentialsForSlug(
+  manager: ReturnType<typeof getCredentialManager>,
+  connectionSlug: string,
+) {
+  const scoped = await manager.getLlmOAuth(connectionSlug);
+  if (scoped?.accessToken) {
+    return { ...scoped, source: 'native' as const };
+  }
+
+  // The process-global key is a legacy compatibility fallback only. Once
+  // multiple Claude rows exist, using it for a slug with no scoped credential
+  // would silently authenticate as whichever account wrote the global key last.
+  const claudeConnectionCount = getLlmConnections().filter(connection => (
+    connection.providerType === 'anthropic'
+    && connection.authType === 'oauth'
+    && !connection.piAuthProvider
+  )).length;
+  return claudeConnectionCount <= 1
+    ? manager.getClaudeOAuthCredentials()
+    : null;
+}
+
 /**
  * Perform the actual token refresh (internal, called only when holding mutex)
  * Returns TokenResult with accessToken and optional migrationRequired info
@@ -105,8 +133,11 @@ export async function performTokenRefresh(
   manager: ReturnType<typeof getCredentialManager>,
   refreshToken: string,
   originalSource: 'native' | 'cli' | undefined,
-  connectionSlug: string
+  connectionSlug: string,
+  refreshEpoch = captureLlmCredentialRefreshEpoch(connectionSlug),
 ): Promise<TokenResult> {
+  if (refreshEpoch === undefined) return { accessToken: null };
+
   try {
     const refreshed = await refreshClaudeToken(refreshToken);
 
@@ -114,25 +145,49 @@ export async function performTokenRefresh(
     const expiresAtDate = refreshed.expiresAt ? new Date(refreshed.expiresAt).toISOString() : 'never';
     debug(`[auth] Successfully refreshed Claude OAuth token (expires: ${expiresAtDate})`);
 
-    // Store the new credentials
-    // If refresh succeeded with our native endpoint, mark as 'native'
-    // (successful refresh proves compatibility with our OAuth system)
-    await manager.setClaudeOAuthCredentials({
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken,
-      expiresAt: refreshed.expiresAt,
-      source: 'native',
-    });
+    return withLlmCredentialCommit(connectionSlug, async () => {
+      if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) {
+        return { accessToken: null };
+      }
 
-    // Also save to LLM connection (dual-write for backwards compatibility)
-    // This ensures both legacy and modern auth paths have the refreshed token
-    await manager.setLlmOAuth(connectionSlug, {
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken,
-      expiresAt: refreshed.expiresAt,
-    });
+      // A refresh may be invalidated while the encrypted store is yielding.
+      // Preserve the prior active credential on reauth/cancel, while DELETE
+      // queues behind this commit and removes both copies durably.
+      const previousGlobal = await manager.getClaudeOAuthCredentials();
+      const previousScoped = await manager.getLlmOAuth(connectionSlug);
+      const restorePrevious = async () => {
+        if (previousGlobal) await manager.setClaudeOAuthCredentials(previousGlobal);
+        else await manager.deleteClaudeOAuthCredentials();
+        if (previousScoped) await manager.setLlmOAuth(connectionSlug, previousScoped);
+        else await manager.deleteLlmOAuth(connectionSlug);
+      };
 
-    return { accessToken: refreshed.accessToken };
+      try {
+        // If refresh succeeded with our native endpoint, mark as 'native'. The
+        // global copy remains the inherited Claude runtime source until that
+        // upstream compatibility path is migrated to scoped credentials.
+        await manager.setClaudeOAuthCredentials({
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresAt: refreshed.expiresAt,
+          source: 'native',
+        });
+        await manager.setLlmOAuth(connectionSlug, {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          expiresAt: refreshed.expiresAt,
+        });
+
+        if (isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) {
+          return { accessToken: refreshed.accessToken };
+        }
+        await restorePrevious();
+        return { accessToken: null };
+      } catch (error) {
+        await restorePrevious();
+        throw error;
+      }
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     debug('[auth] Failed to refresh Claude OAuth token:', errorMessage);
@@ -162,16 +217,12 @@ export async function performTokenRefresh(
         };
       }
 
-      // Clear the incompatible credentials to force fresh authentication
-      // Clear from both legacy and LLM connection locations
-      await manager.setClaudeOAuthCredentials({
-        accessToken: '',
-        refreshToken: undefined,
-        expiresAt: undefined,
+      await withLlmCredentialCommit(connectionSlug, async () => {
+        if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) return;
+        // Clear the incompatible credential from both compatibility locations.
+        await manager.deleteClaudeOAuthCredentials();
+        await manager.deleteLlmOAuth(connectionSlug);
       });
-
-      // Also clear from LLM connection (dual-clear for consistency)
-      await manager.deleteLlmCredentials(connectionSlug);
     }
 
     // Token refresh failed - return null token with optional migration info
@@ -201,9 +252,21 @@ export async function performTokenRefresh(
  */
 export async function getValidClaudeOAuthToken(connectionSlug: string): Promise<TokenResult> {
   const manager = getCredentialManager();
+  const connection = getLlmConnection(connectionSlug);
+  if (
+    connection?.providerType !== 'anthropic'
+    || connection.authType !== 'oauth'
+    || connection.piAuthProvider
+  ) return { accessToken: null };
+  const refreshEpoch = captureLlmCredentialRefreshEpoch(connectionSlug);
+  if (refreshEpoch === undefined) return { accessToken: null };
 
   // Try to get credentials from our store
-  const creds = await manager.getClaudeOAuthCredentials();
+  const creds = await getClaudeOAuthCredentialsForSlug(manager, connectionSlug);
+
+  if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) {
+    return { accessToken: null };
+  }
 
   if (!creds || !creds.accessToken) {
     return { accessToken: null };
@@ -224,21 +287,35 @@ export async function getValidClaudeOAuthToken(connectionSlug: string): Promise<
         } catch {
           // Ignore errors from the other refresh attempt
         }
+        if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) {
+          return { accessToken: null };
+        }
         // Re-read credentials after waiting (they may have been updated)
-        const updatedCreds = await manager.getClaudeOAuthCredentials();
+        const updatedCreds = await getClaudeOAuthCredentialsForSlug(manager, connectionSlug);
+        if (!isLlmCredentialRefreshCurrent(connectionSlug, refreshEpoch)) {
+          return { accessToken: null };
+        }
         if (updatedCreds?.accessToken && !isTokenExpired(updatedCreds.expiresAt)) {
           const expiresAtDate = updatedCreds.expiresAt ? new Date(updatedCreds.expiresAt).toISOString() : 'never';
           debug(`[auth] Got refreshed token from concurrent refresh (expires: ${expiresAtDate})`);
           return { accessToken: updatedCreds.accessToken };
         }
-        // If still no valid token, return null (the other refresh may have failed)
-        debug('[auth] Concurrent refresh did not produce valid token');
-        return { accessToken: null };
+        // A different Claude slug may have held the compatibility mutex. Retry
+        // this slug so its own scoped refresh can run next.
+        debug('[auth] Concurrent refresh did not produce a valid token for this slug');
+        await Promise.resolve();
+        return getValidClaudeOAuthToken(connectionSlug);
       }
 
       // Start the refresh and set the mutex
       debug('[auth] Starting token refresh (holding mutex)');
-      refreshInProgress = performTokenRefresh(manager, creds.refreshToken, creds.source, connectionSlug);
+      refreshInProgress = performTokenRefresh(
+        manager,
+        creds.refreshToken,
+        creds.source,
+        connectionSlug,
+        refreshEpoch,
+      );
 
       try {
         const result = await refreshInProgress;

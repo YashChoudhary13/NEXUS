@@ -227,16 +227,20 @@ async function testAnthropicCompatible(
 
 export const piDriver: ProviderDriver = {
   provider: 'pi',
-  buildRuntime: ({ context, providerOptions, resolvedPaths }) => ({
-    paths: {
-      piServer: resolvedPaths.piServerPath,
-      interceptor: resolvedPaths.interceptorBundlePath,
-      node: resolvedPaths.nodeRuntimePath,
-    },
-    piAuthProvider: providerOptions?.piAuthProvider || context.connection?.piAuthProvider,
-    baseUrl: context.connection?.baseUrl,
-    customEndpoint: context.connection?.customEndpoint,
-    customModels: context.connection?.models?.map(m => {
+  buildRuntime: ({ context, providerOptions, resolvedPaths }) => {
+    const piAuthProvider = providerOptions?.piAuthProvider || context.connection?.piAuthProvider;
+    const usesServerOwnedPiOAuth = context.connection?.authType === 'oauth'
+      && (piAuthProvider === 'openai-codex' || piAuthProvider === 'github-copilot');
+    return {
+      paths: {
+        piServer: resolvedPaths.piServerPath,
+        interceptor: resolvedPaths.interceptorBundlePath,
+        node: resolvedPaths.nodeRuntimePath,
+      },
+      piAuthProvider,
+      baseUrl: usesServerOwnedPiOAuth ? undefined : context.connection?.baseUrl,
+      customEndpoint: usesServerOwnedPiOAuth ? undefined : context.connection?.customEndpoint,
+      customModels: context.connection?.models?.map(m => {
       if (typeof m === 'string') return m;
       const supportsImages = typeof m.supportsImages === 'boolean'
         ? m.supportsImages
@@ -249,8 +253,9 @@ export const piDriver: ProviderDriver = {
         };
       }
       return m.id;
-    }),
-  }),
+      }),
+    };
+  },
   fetchModels: async ({ connection, credentials, timeoutMs }) => {
     // Copilot OAuth: fetch models directly from the Copilot API via HTTP.
     // Uses the GitHub OAuth token (our refreshToken) to exchange for a

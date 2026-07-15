@@ -7,6 +7,7 @@
 
 import type { CredentialBackend } from './backends/types.ts';
 import type { CredentialId, CredentialType, StoredCredential, CredentialHealthStatus, CredentialHealthIssue } from './types.ts';
+import { credentialIdToAccount } from './types.ts';
 import type { LlmAuthType, LlmProviderType } from '../config/llm-connections.ts';
 import { SecureStorageBackend } from './backends/secure-storage.ts';
 import { debug } from '../utils/debug.ts';
@@ -148,7 +149,9 @@ export class CredentialManager {
   async delete(id: CredentialId): Promise<boolean> {
     await this.ensureInitialized();
 
+    const account = credentialIdToAccount(id);
     let deleted = false;
+    const failures: unknown[] = [];
     for (const backend of this.backends) {
       try {
         if (await backend.delete(id)) {
@@ -157,7 +160,12 @@ export class CredentialManager {
         }
       } catch (err) {
         debug(`[CredentialManager] Error deleting from ${backend.name}:`, err);
+        failures.push(err);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Failed to persist credential deletion for ${account}`);
     }
 
     return deleted;
@@ -166,7 +174,9 @@ export class CredentialManager {
   deleteSync(id: CredentialId): boolean {
     this.ensureInitializedSync();
 
+    const account = credentialIdToAccount(id);
     let deleted = false;
+    const failures: unknown[] = [];
     for (const backend of this.backends) {
       if (!backend.deleteSync) {
         debug(`[CredentialManager] Backend ${backend.name} does not support synchronous delete`);
@@ -180,7 +190,12 @@ export class CredentialManager {
         }
       } catch (err) {
         debug(`[CredentialManager] Error deleting from ${backend.name}:`, err);
+        failures.push(err);
       }
+    }
+
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Failed to persist credential deletion for ${account}`);
     }
 
     return deleted;
@@ -273,6 +288,11 @@ export class CredentialManager {
       expiresAt: credentials.expiresAt,
       source: credentials.source,
     });
+  }
+
+  /** Delete the inherited process-global Claude OAuth credential. */
+  async deleteClaudeOAuthCredentials(): Promise<boolean> {
+    return this.delete({ type: 'claude_oauth' });
   }
 
   /** Get workspace MCP OAuth credentials */
@@ -391,14 +411,37 @@ export class CredentialManager {
   }
 
   /**
+   * Delete only the OAuth token for an LLM connection.
+   *
+   * Refresh rollback and invalid-token cleanup must not remove API-key, IAM,
+   * or service-account credentials that happen to share the same slug.
+   */
+  async deleteLlmOAuth(connectionSlug: string): Promise<boolean> {
+    return this.delete({ type: 'llm_oauth', connectionSlug });
+  }
+
+  /**
    * Delete all credentials for an LLM connection.
    * @param connectionSlug - The connection slug
    */
   async deleteLlmCredentials(connectionSlug: string): Promise<void> {
-    await this.delete({ type: 'llm_api_key', connectionSlug });
-    await this.delete({ type: 'llm_oauth', connectionSlug });
-    await this.delete({ type: 'llm_iam', connectionSlug });
-    await this.delete({ type: 'llm_service_account', connectionSlug });
+    const ids: CredentialId[] = [
+      { type: 'llm_api_key', connectionSlug },
+      { type: 'llm_oauth', connectionSlug },
+      { type: 'llm_iam', connectionSlug },
+      { type: 'llm_service_account', connectionSlug },
+    ];
+    const failures: unknown[] = [];
+    for (const id of ids) {
+      try {
+        await this.delete(id);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Failed to delete all credentials for LLM connection ${connectionSlug}`);
+    }
   }
 
   // ============================================================

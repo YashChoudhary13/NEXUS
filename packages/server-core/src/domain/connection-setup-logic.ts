@@ -167,6 +167,85 @@ export const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
   },
 }
 
+type OAuthConnectionTarget = Pick<LlmConnection, 'providerType' | 'authType' | 'piAuthProvider'>
+
+function getBuiltInConnectionTemplate(slug: string) {
+  if (slug === 'codex') return BUILT_IN_CONNECTION_TEMPLATES['chatgpt-plus']
+  const baseSlug = slug.replace(/-\d+$/, '')
+  return BUILT_IN_CONNECTION_TEMPLATES[slug] ?? BUILT_IN_CONNECTION_TEMPLATES[baseSlug]
+}
+
+/** True for immutable OAuth built-in namespaces, including legacy `codex`. */
+export function isServerOwnedOAuthBuiltInSlug(slug: string): boolean {
+  return getBuiltInConnectionTemplate(slug)?.authType === 'oauth'
+}
+
+export function getServerOwnedOAuthBuiltInKind(
+  slug: string,
+): 'chatgpt' | 'claude' | 'copilot' | undefined {
+  const template = getBuiltInConnectionTemplate(slug)
+  if (template?.authType !== 'oauth') return undefined
+  if (template.piAuthProvider === 'openai-codex') return 'chatgpt'
+  if (template.piAuthProvider === 'github-copilot') return 'copilot'
+  if (template.providerType === 'anthropic') return 'claude'
+  return undefined
+}
+
+/**
+ * Provider-specific OAuth handlers receive a client-authored connection slug.
+ * Resolve that slug against both the immutable built-in namespace and an
+ * existing server-side row before allowing the handler to mutate credentials.
+ */
+export function isChatGptOAuthConnectionTarget(
+  slug: string,
+  connection?: OAuthConnectionTarget | null,
+): boolean {
+  const template = getBuiltInConnectionTemplate(slug)
+  const isBuiltInChatGpt = template?.authType === 'oauth'
+    && template.piAuthProvider === 'openai-codex'
+  const isStoredChatGpt = connection?.providerType === 'pi'
+    && connection.authType === 'oauth'
+    && connection.piAuthProvider === 'openai-codex'
+
+  // A canonical namespace always belongs to its built-in provider. For an
+  // unknown/legacy slug, require the complete stored provider tuple.
+  return template ? isBuiltInChatGpt : isStoredChatGpt
+}
+
+export function isClaudeOAuthConnectionTarget(
+  slug: string,
+  connection?: OAuthConnectionTarget | null,
+): boolean {
+  const template = getBuiltInConnectionTemplate(slug)
+  const isBuiltInClaude = template?.providerType === 'anthropic'
+    && template.authType === 'oauth'
+  const isStoredClaude = connection?.providerType === 'anthropic'
+    && connection.authType === 'oauth'
+    && !connection.piAuthProvider
+
+  // A conflicting existing row fails closed. The built-in template is used
+  // only before the normal first-time SETUP has created its config row.
+  return template
+    ? isBuiltInClaude && (!connection || isStoredClaude)
+    : isStoredClaude
+}
+
+export function isGitHubCopilotOAuthConnectionTarget(
+  slug: string,
+  connection?: OAuthConnectionTarget | null,
+): boolean {
+  const template = getBuiltInConnectionTemplate(slug)
+  const isBuiltInCopilot = template?.authType === 'oauth'
+    && template.piAuthProvider === 'github-copilot'
+  const isStoredCopilot = connection?.providerType === 'pi'
+    && connection.authType === 'oauth'
+    && connection.piAuthProvider === 'github-copilot'
+
+  return template
+    ? isBuiltInCopilot && (!connection || isStoredCopilot)
+    : isStoredCopilot
+}
+
 // ============================================================
 // Pi Auth Provider Display Names
 // ============================================================
@@ -207,8 +286,7 @@ export function piAuthProviderDisplayName(piAuthProvider: string): string | null
  */
 export function createBuiltInConnection(slug: string, baseUrl?: string | null): LlmConnection {
   // Try exact match first, then strip numeric suffix for derived slugs (e.g. 'anthropic-api-2' → 'anthropic-api')
-  const baseSlug = slug.replace(/-\d+$/, '')
-  const template = BUILT_IN_CONNECTION_TEMPLATES[slug] ?? BUILT_IN_CONNECTION_TEMPLATES[baseSlug]
+  const template = getBuiltInConnectionTemplate(slug)
   if (!template) {
     throw new Error(`Unknown built-in connection slug: ${slug}. Custom connections should be created through settings.`)
   }

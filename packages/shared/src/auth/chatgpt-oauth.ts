@@ -23,7 +23,7 @@ const OAUTH_SCOPES = CHATGPT_OAUTH_CONFIG.SCOPES;
 
 export interface ChatGptTokens {
   /** JWT id_token containing user identity claims */
-  idToken: string;
+  idToken?: string;
   /** Access token for API calls */
   accessToken: string;
   /** Refresh token for getting new tokens */
@@ -127,7 +127,7 @@ export async function exchangeChatGptTokens(
   }
 
   const data = (await response.json()) as {
-    id_token: string;
+    id_token?: string;
     access_token: string;
     refresh_token?: string;
     expires_in?: number;
@@ -183,7 +183,7 @@ export async function refreshChatGptTokens(
     }
 
     const data = (await response.json()) as {
-      id_token: string;
+      id_token?: string;
       access_token: string;
       refresh_token?: string;
       expires_in?: number;

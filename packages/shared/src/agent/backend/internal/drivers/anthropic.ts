@@ -25,7 +25,11 @@ export const anthropicDriver: ProviderDriver = {
       throw new Error('Anthropic credentials required to fetch models');
     }
 
-    const baseUrl = connection.baseUrl || 'https://api.anthropic.com';
+    // OAuth credentials are never routed to a client-authored endpoint. Keep
+    // this runtime defense even though stored config is normalized on read.
+    const baseUrl = connection.authType === 'oauth'
+      ? 'https://api.anthropic.com'
+      : connection.baseUrl || 'https://api.anthropic.com';
     const headers: Record<string, string> = {
       'anthropic-version': '2023-06-01',
     };
@@ -150,7 +154,7 @@ export const anthropicDriver: ProviderDriver = {
       model: testModel,
       apiKey: apiKey || undefined,
       oauthToken: oauthToken || undefined,
-      baseUrl: connection.baseUrl || undefined,
+      baseUrl: connection.authType === 'oauth' ? undefined : connection.baseUrl || undefined,
     });
 
     if (!validationResult.success) {

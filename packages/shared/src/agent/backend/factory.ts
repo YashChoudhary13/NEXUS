@@ -843,7 +843,7 @@ export async function validateConnection(
         model: connection.defaultModel || DEFAULT_MODEL,
         apiKey: credentials.apiKey,
         oauthToken: credentials.oauthToken,
-        baseUrl: connection.baseUrl,
+        baseUrl: connection.authType === 'oauth' ? undefined : connection.baseUrl,
       });
     }
 

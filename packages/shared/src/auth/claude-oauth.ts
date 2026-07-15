@@ -192,12 +192,13 @@ export async function exchangeClaudeCode(
   onStatus?: (message: string) => void
 ): Promise<ClaudeTokens> {
   // Verify we have valid state
-  if (!currentOAuthState) {
+  const oauthState = currentOAuthState
+  if (!oauthState) {
     throw new Error('No OAuth state found. Please start the authentication flow again.')
   }
 
-  if (Date.now() > currentOAuthState.expiresAt) {
-    clearOAuthState()
+  if (Date.now() > oauthState.expiresAt) {
+    if (currentOAuthState === oauthState) clearOAuthState()
     throw new Error('OAuth state expired (older than 10 minutes). Please try again.')
   }
 
@@ -211,8 +212,8 @@ export async function exchangeClaudeCode(
     client_id: CLAUDE_CLIENT_ID,
     code: cleanedCode,
     redirect_uri: REDIRECT_URI,
-    code_verifier: currentOAuthState.codeVerifier,
-    state: currentOAuthState.state,
+    code_verifier: oauthState.codeVerifier,
+    state: oauthState.state,
   }
 
   try {
@@ -259,8 +260,9 @@ export async function exchangeClaudeCode(
       if (data.organization) debug('[claude-oauth] organization keys: ' + Object.keys(data.organization).join(','))
     }
 
-    // Clear state after successful exchange
-    clearOAuthState()
+    // A newer START may have installed another PKCE state while this network
+    // request was in flight. Consume only the state this exchange captured.
+    if (currentOAuthState === oauthState) clearOAuthState()
 
     onStatus?.('Authentication successful!')
 

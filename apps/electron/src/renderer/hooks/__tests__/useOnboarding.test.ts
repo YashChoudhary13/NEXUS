@@ -79,6 +79,21 @@ describe('apiSetupMethodToConnectionSetup', () => {
     expect(setup.slug).toBe('chatgpt-plus')
   })
 
+  it('pi_chatgpt_oauth never accepts client-authored identity fields', () => {
+    const oauthIdentity = {
+      account: { uuid: 'user-a', emailAddress: 'person@example.test' },
+      organization: { uuid: 'workspace-a' },
+    }
+    const setup = apiSetupMethodToConnectionSetup(
+      'pi_chatgpt_oauth',
+      { oauthIdentity },
+      null,
+      new Set(),
+    )
+
+    expect(setup.oauthIdentity).toBeUndefined()
+  })
+
   it('pi_copilot_oauth maps to github-copilot slug', () => {
     const setup = apiSetupMethodToConnectionSetup('pi_copilot_oauth', {}, null, new Set())
     expect(setup.slug).toBe('github-copilot')
