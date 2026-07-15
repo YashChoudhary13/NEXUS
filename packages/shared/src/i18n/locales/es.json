@@ -833,6 +833,7 @@
   "settings.about.title": "Acerca de",
   "settings.about.updateReady": "Actualización lista",
   "settings.about.version": "Versión",
+  "settings.ai.addAnotherAccount": "Añadir otra cuenta",
   "settings.ai.addConnection": "+ Añadir conexión",
   "settings.ai.connection": "Conexión",
   "settings.ai.connectionDesc": "Conexión API para nuevos chats",

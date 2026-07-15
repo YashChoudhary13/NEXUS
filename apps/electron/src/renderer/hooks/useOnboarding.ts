@@ -9,7 +9,7 @@
  * 4. Credentials (API Key or Claude OAuth)
  * 5. Complete
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type {
   OnboardingState,
   OnboardingStep,
@@ -19,7 +19,12 @@ import type { ProviderChoice } from '@/components/onboarding/ProviderSelectStep'
 import type { LocalModelSubmitData } from '@/components/onboarding/LocalModelStep'
 import type { ApiKeySubmitData } from '@/components/apisetup'
 import type { CustomEndpointConfig } from '@config/llm-connections'
-import type { SetupNeeds, LlmConnectionSetup, ClaudeOAuthIdentityDto } from '../../shared/types'
+import type {
+  SetupNeeds,
+  LlmConnectionSetup,
+  LlmConnectionWithStatus,
+  ClaudeOAuthIdentityDto,
+} from '../../shared/types'
 
 interface UseOnboardingOptions {
   /** Called when onboarding is complete */
@@ -60,7 +65,10 @@ interface UseOnboardingReturn {
 
   // Local model
   handleSubmitLocalModel: (data: LocalModelSubmitData) => void
-  handleStartOAuth: (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => void
+  handleStartOAuth: (
+    methodOverride?: ApiSetupMethod,
+    connectionSlugOverride?: string | null,
+  ) => void
 
   // Claude OAuth (two-step flow)
   isWaitingForCode: boolean
@@ -118,6 +126,50 @@ export function resolveSlugForMethod(
   let i = 2
   while (existingSlugs.has(`${base}-${i}`)) i++
   return `${base}-${i}`
+}
+
+export interface OAuthConnectionTarget {
+  slug: string
+  updateOnly: boolean
+}
+
+/**
+ * Resolve the exact row an OAuth flow may mutate.
+ *
+ * `undefined` preserves the hook's current edit target, an explicit slug means
+ * reauthentication, and `null` force-starts a new account even if React has not
+ * yet rendered a just-cleared editing slug.
+ */
+export function resolveOAuthConnectionTarget(
+  method: ApiSetupMethod,
+  editingSlug: string | null,
+  existingSlugs: Set<string>,
+  connectionSlugOverride?: string | null,
+): OAuthConnectionTarget {
+  const targetEditingSlug = connectionSlugOverride === undefined
+    ? editingSlug
+    : connectionSlugOverride
+  return {
+    slug: resolveSlugForMethod(method, targetEditingSlug, existingSlugs),
+    updateOnly: targetEditingSlug !== null,
+  }
+}
+
+/** Return the supported OAuth setup flow for a stored connection row. */
+export function getOAuthSetupMethodForConnection(
+  connection: Pick<
+    LlmConnectionWithStatus,
+    'authType' | 'providerType' | 'type' | 'piAuthProvider'
+  >,
+): ApiSetupMethod | null {
+  if (connection.authType !== 'oauth') return null
+
+  const provider = connection.providerType ?? connection.type
+  if (provider === 'anthropic' && !connection.piAuthProvider) return 'claude_oauth'
+  if (provider !== 'pi') return null
+  if (connection.piAuthProvider === 'openai-codex') return 'pi_chatgpt_oauth'
+  if (connection.piAuthProvider === 'github-copilot') return 'pi_copilot_oauth'
+  return null
 }
 
 // Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
@@ -215,6 +267,7 @@ export function useOnboarding({
     isRecheckingGitBash: false,
     isCheckingGitBash: true, // Start as true until check completes
   })
+  const oauthTargetRef = useRef<(OAuthConnectionTarget & { method: ApiSetupMethod }) | null>(null)
 
   // Check Git Bash on Windows at mount. If missing, redirect to git-bash step
   // regardless of the initial step (provider-select skips the welcome gate).
@@ -526,7 +579,10 @@ export function useOnboarding({
   const [copilotDeviceCode, setCopilotDeviceCode] = useState<{ userCode: string; verificationUri: string } | undefined>()
 
   // Start OAuth flow (Claude or ChatGPT depending on selected method)
-  const handleStartOAuth = useCallback(async (methodOverride?: ApiSetupMethod, connectionSlugOverride?: string) => {
+  const handleStartOAuth = useCallback(async (
+    methodOverride?: ApiSetupMethod,
+    connectionSlugOverride?: string | null,
+  ) => {
     const effectiveMethod = methodOverride ?? state.apiSetupMethod
 
     if (methodOverride && methodOverride !== state.apiSetupMethod) {
@@ -550,16 +606,26 @@ export function useOnboarding({
       return
     }
 
+    const target = resolveOAuthConnectionTarget(
+      effectiveMethod,
+      editingSlug,
+      existingSlugs,
+      connectionSlugOverride,
+    )
+    oauthTargetRef.current = { method: effectiveMethod, ...target }
+
     try {
       // ChatGPT OAuth (single-step flow - opens browser, captures tokens automatically)
       if (effectiveMethod === 'pi_chatgpt_oauth') {
-        const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
-        const isReauth = !!effectiveEditingSlug
-        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, effectiveEditingSlug, existingSlugs).slug
-        const result = await window.electronAPI.startChatGptOAuth(connectionSlug)
+        const result = await window.electronAPI.startChatGptOAuth(target.slug)
 
         if (result.success) {
-          await saveAndValidateConnection(connectionSlug, effectiveMethod, undefined, isReauth)
+          await saveAndValidateConnection(
+            target.slug,
+            effectiveMethod,
+            undefined,
+            target.updateOnly,
+          )
         } else {
           setState(s => ({
             ...s,
@@ -572,20 +638,21 @@ export function useOnboarding({
 
       // Copilot OAuth (device flow — polls for token after user enters code on GitHub)
       if (effectiveMethod === 'pi_copilot_oauth') {
-        const effectiveEditingSlug = connectionSlugOverride ?? editingSlug
-        const isReauth = !!effectiveEditingSlug
-        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}, effectiveEditingSlug, existingSlugs).slug
-
         // Subscribe to device code event before starting the flow
         const cleanup = window.electronAPI.onCopilotDeviceCode((data) => {
           setCopilotDeviceCode(data)
         })
 
         try {
-          const result = await window.electronAPI.startCopilotOAuth(connectionSlug)
+          const result = await window.electronAPI.startCopilotOAuth(target.slug)
 
           if (result.success) {
-            await saveAndValidateConnection(connectionSlug, effectiveMethod, undefined, isReauth)
+            await saveAndValidateConnection(
+              target.slug,
+              effectiveMethod,
+              undefined,
+              target.updateOnly,
+            )
           } else {
             setState(s => ({
               ...s,
@@ -678,12 +745,23 @@ export function useOnboarding({
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
     try {
-      const connectionSlug = apiSetupMethodToConnectionSetup('claude_oauth', {}, editingSlug, existingSlugs).slug
-      const result = await window.electronAPI.exchangeClaudeCode(code.trim(), connectionSlug)
+      const target = oauthTargetRef.current?.method === 'claude_oauth'
+        ? oauthTargetRef.current
+        : {
+            method: 'claude_oauth' as const,
+            ...resolveOAuthConnectionTarget('claude_oauth', editingSlug, existingSlugs),
+          }
+      const result = await window.electronAPI.exchangeClaudeCode(code.trim(), target.slug)
 
       if (result.success && result.token) {
         setIsWaitingForCode(false)
-        await saveAndValidateConnection(connectionSlug, 'claude_oauth', result.token, !!editingSlug, result.identity)
+        await saveAndValidateConnection(
+          target.slug,
+          'claude_oauth',
+          result.token,
+          target.updateOnly,
+          result.identity,
+        )
       } else {
         setState(s => ({
           ...s,
@@ -729,6 +807,7 @@ export function useOnboarding({
 
   // Cancel OAuth flow
   const handleCancelOAuth = useCallback(async () => {
+    oauthTargetRef.current = null
     setIsWaitingForCode(false)
     setState(s => ({ ...s, credentialStatus: 'idle', errorMessage: undefined }))
     // Clear OAuth state on backend
@@ -811,6 +890,7 @@ export function useOnboarding({
 
   // Reset onboarding to initial state (used after logout or modal close)
   const reset = useCallback(() => {
+    oauthTargetRef.current = null
     setState({
       step: initialStep,
       loginStatus: 'idle',

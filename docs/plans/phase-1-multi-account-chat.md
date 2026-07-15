@@ -2,11 +2,13 @@
 
 **Objective:** make the existing Craft Agents chat experience work naturally with multiple
 Claude and Codex subscription identities.
-**Status:** `[DECIDED]` — **signed off by the owner 2026-07-14**; §8 questions answered
-(D-020…D-023), implementation authorized and delegated via the
-[Codex kickoff prompt](./phase-1-kickoff-prompt-codex.md). Implementation begins with the
-S1 spike; **no Phase 1 code has landed yet**. All code references verified against baseline
-`4289b16` + fork docs commits.
+**Status:** `[DECIDED]` — **signed off by the owner 2026-07-14; implementation is in progress
+and Phase 1 is not complete.** S1 passed its engineering gate. PR-1A is implemented,
+review-repaired, verified, and open as
+[GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1). PR-1B is implemented and
+verified on `feature/multi-account-ux`; publication/merge is pending. PR-1C, PR-1D, PR-1F,
+and PR-1E remain. No Phase 1 feature branch has merged into `develop`, and the independently
+billed-subscription acceptance wording remains `[OPEN]`.
 
 > Path note: the master plan referenced `docs/superpowers/plans/…`; per the roadmap decision
 > this repo keeps phase plans here in `docs/plans/`.
@@ -26,8 +28,8 @@ for Claude only. Phase 1 is a *generalization*, not greenfield:
 | Codex identity data available | ChatGPT OAuth already requests `id_token_add_organizations: 'true'` (`packages/shared/src/auth/chatgpt-oauth.ts:82`) and **persists the identity-bearing JWT `idToken`** in the credential store (`rpc/llm-connections.ts:683-688`) | JWT is never decoded/displayed |
 | Identity shown in UI | `AiSettingsPage.tsx:287-288` renders `email · org` line for OAuth connections | Works for any connection once fields are stamped |
 | **Duplicate-account warning** | **Already implemented for Claude**: `duplicateAccountUuids` computed at `AiSettingsPage.tsx:953`, row-flagged via `isDuplicateAccount` at `:1138` | Generalize key + copy for Codex |
-| Multiple same-provider connections | `createBuiltInConnection` **already supports suffixed slugs**: `'chatgpt-plus-2'` → base template + display name "… 2" (`packages/server-core/src/domain/connection-setup-logic.ts:208-236`). Credentials are slug-scoped (`llm::{slug}::oauth_token`, `llm-connections.ts:361-363`) so accounts can't cross | **No UI mints a second OAuth connection** (onboarding hardcodes `pi_chatgpt_oauth: 'chatgpt-plus'`, `useOnboarding.ts:97`) |
-| Account display names / roles | `LlmConnection.name` is free text and user-editable — "Codex Builder" is just a renamed connection | Surface rename affordance |
+| Multiple same-provider connections | `createBuiltInConnection` **already supports suffixed slugs**: `'chatgpt-plus-2'` → base template + display name "… 2" (`packages/server-core/src/domain/connection-setup-logic.ts:208-236`). The generic Add Connection flow already mints the next free suffix, and credentials are slug-scoped. | Add an explicit provider-row action and harden exact new-vs-reauth flow targeting. |
+| Account display names / roles | `LlmConnection.name` is free text and the Settings connection-row menu already exposes Rename — "Codex Builder" is just a renamed connection | None; preserve Rename beside the new action. |
 | Connection locked per session | `resolveEffectiveConnectionSlug` + session lock after first message (`llm-connections.ts:670-693`); Pi subprocess auth can't be hot-swapped (restart-required signature) | None — matches D-014 by construction |
 | Session forking for handoffs | Dispatch `mode: 'move' | 'fork'` exists (`packages/server-core/src/handlers/rpc/sessions.ts:557`); `SessionBundle` carries `BundleBranchInfo` (`sdkSessionId` + `sdkTurnId` branch point, `packages/shared/src/sessions/bundle.ts:44-73`); transfer already injects one-shot hidden **handoff summaries** on the destination's first turn | Wire into an in-workspace "Continue with another agent" action with account/model rebinding |
 | Account-aware picker | Picker groups by provider only: Anthropic / Local / "Craft Agents Backend" (`model-picker-helpers.ts:36-55`) | Add the account tier |
@@ -98,23 +100,38 @@ changes** (the `:287` identity line just lights up).
 
 ### PR-1B — Multi-account connections UX
 
+**Implementation status (2026-07-15):** `[IMPLEMENTED — REVIEW/PUBLICATION PENDING]` on
+`feature/multi-account-ux`.
+
 **Change:** let the user add a second/third subscription login of the same provider and name
 each connection.
 
-- Slug minting helper (shared, tested): next free suffix among existing connections
+- Slug/flow-target resolver (renderer hook, exported and tested): next free suffix among existing connections
   (`chatgpt-plus` → `chatgpt-plus-2` → `-3`; same for `claude-max`/Copilot slugs) — matches
   the already-supported `createBuiltInConnection` suffix convention
   (`connection-setup-logic.ts:209-211,228-232`).
-- `AiSettingsPage.tsx`: "Add another account" action on OAuth provider rows → runs the
+- `AiSettingsPage.tsx`: "Add another account" action on supported OAuth provider rows → runs the
   existing OAuth setup flow against the minted slug (the flow is already slug-parameterized
-  end-to-end). Rename affordance surfaced on each connection row (edits `name`).
-- Onboarding untouched except reusing the helper instead of the hardcoded literal
-  (`useOnboarding.ts:97`).
+  end-to-end). The existing Rename action remains on each connection row.
+- `useOnboarding.ts`: reuse and harden the resolver so add-new, re-authentication, and Claude's
+  two-step browser/code flow retain their exact intended target despite asynchronous React state.
 - i18n: new keys in **all 6 locales** (`settings.ai.addAnotherAccount`, etc.), parity+sorted
   lints enforce.
 
-**Tests:** slug-minting unit tests (gaps, deletions, double-digit); manual matrix from S1
-rerun on the real UI.
+**Implemented detail:** explicit null means “mint a new target” even when React still holds a
+stale edit slug; re-authentication pins the exact existing slug; the Claude two-step flow
+retains the same target from browser start through code submission; provider mapping supports
+Claude, ChatGPT, and Copilot only and fails closed for other Pi OAuth rows. Rename remains in
+the existing row menu. The new key is present in English plus all six translated locale files.
+
+**Verification:** slug-target unit tests cover gaps, deletion/base reuse, double-digit suffixes,
+new-vs-reauth semantics, and supported/fail-closed provider mapping (**22 pass / 40
+assertions**). Full renderer tests pass (**476 / 810 assertions**); shared tests pass (**108**);
+shared/Electron typechecks, i18n parity+sorting (**1,640 keys per locale**), changed-file lint
+(0 errors; 3 inherited warnings), and the full Electron build pass. A built-app accessibility
+smoke confirmed Rename, Re-authenticate, and Add another account render together; the new
+action was intentionally not clicked. The full two-real-account manual matrix remains a
+Phase 1 gate before closure.
 **DoD:** master-plan criteria "two different Codex subscriptions authenticated
 simultaneously" + "restart restores accounts" pass through the UI alone.
 
