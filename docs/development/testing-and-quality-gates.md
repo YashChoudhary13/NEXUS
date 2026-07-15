@@ -61,10 +61,55 @@ shutdown (exit 0). One benign fresh-state error line: `No LLM connection found f
 tool-icons/permissions were created in the scratch dir — but the auto-created default
 workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-workspace`
 (tilde path stored in config.json), and window-state/logs/docs syncs also touched
-`~/.craft-agent`. A smoke run therefore writes a skeleton workspace (+ scheduler-tick lines in
-`events.jsonl`) into the real home config dir even when `CRAFT_CONFIG_DIR` points elsewhere.
-Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
-behavior — documented, not fixed; candidate note for the repo-health workstream.)
+`~/.craft-agent`. The encrypted credential backend likewise hardcodes
+`~/.craft-agent/credentials.enc` (`packages/shared/src/credentials/backends/secure-storage.ts`),
+so OAuth/API credentials are **not isolated at all** by `CRAFT_CONFIG_DIR`; a scratch instance
+using a production slug can overwrite that slug's real credential. A smoke run therefore
+writes a skeleton workspace (+ scheduler-tick lines in `events.jsonl`) and credentialed flows
+write the real encrypted store even when `CRAFT_CONFIG_DIR` points elsewhere. Treat
+`CRAFT_CONFIG_DIR` as isolating *global config only*, not workspace data or credentials.
+(Upstream behavior — documented, not fixed; candidate note for the repo-health workstream.)
+
+## Phase 1 PR-1A verification (2026-07-15)
+
+All commands below ran in the isolated `feature/account-identity` worktree with the CI-pinned
+Bun 1.3.10 first on `PATH` (`PATH=/tmp/nexus-bun-1.3.10/bin:$PATH`).
+
+| Command | Exit | Result |
+|---------|------|--------|
+| `bun run test:account-identity` | 0 | ✅ 94 pass / 0 fail / 413 assertions, then exact-slug runtime invalidation 1 pass / 0 fail / 5 assertions |
+| `cd packages/shared && bun test` | 0 | ✅ 3,015 pass / 0 fail / 12 skip / 5,708 assertions |
+| `bun test packages/server-core/src` | 1 | ⚠️ 206 pass / 1 inherited order-dependent failure; clean `develop` fails the same test with 196 pass / 1 fail |
+| `bun run typecheck:shared` | 0 | ✅ clean |
+| `cd packages/server-core && bun run typecheck` | 0 | ✅ clean |
+| `bun run typecheck:electron` | 0 | ✅ clean |
+| `bun run webui:typecheck` | 0 | ✅ clean |
+| `bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| `bun run lint:i18n:parity` | 0 | ✅ 6 locales × 1,639 keys |
+| `bun run lint:i18n:sorted` | 0 | ✅ clean |
+| `git diff --check` | 0 | ✅ clean |
+
+The focused suite covers provider-target helpers, ChatGPT/Copilot/Claude generation races,
+rowless credential cleanup, queued first-time setup versus `updateOnly`, exact runtime
+invalidation, and encrypted-store failure/restart behavior. The complete Electron build retains
+only the known inherited missing-`tsconfig.base.json` warning and Vite chunk-size warnings.
+`typecheck:all` still reaches and fails at the stripped `session-tools-core` `tsconfig.base.json`
+dependency after the earlier package typechecks pass; `lint:i18n:coverage` still points to the
+inherited missing `scripts/check-i18n-coverage.ts`. PR-1A does not mask or reclassify either
+failure. No locale files changed; parity and sorted checks were still rerun and passed.
+
+The full server-core suite's sole failure is also inherited, not introduced by PR-1A:
+`refreshConnectionRuntime > records customModels with the per-model supportsImages flag in the
+IPC payload` assumes a machine-global `slug-A` connection and therefore receives an undefined
+runtime in full-suite order. It passes alone. A detached clean-`develop` worktree reproduced the
+same failure (**196 pass / 1 fail / 417 assertions**); this branch reports **206 pass / 1 fail**
+because PR-1A adds ten passing server tests. The deterministic PR-1A runtime test is run through
+the focused gate.
+
+The real-provider S1 smoke also passed two simultaneous ChatGPT OAuth connections, one locked
+chat per slug, and clean-restart restoration. It proves separate user principals and slug-bound
+credentials/sessions; because both principals selected the same runtime workspace, independently
+billed subscription routing remains `[OPEN]` for the overall Phase 1 acceptance gate.
 
 ## Failure categories explained
 

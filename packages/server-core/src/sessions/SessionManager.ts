@@ -1899,6 +1899,21 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  /**
+   * Invalidate credentials already loaded into live backend subprocesses.
+   *
+   * Credential deletion alone is insufficient because a Pi runtime keeps its
+   * access token in memory. Dispose only sessions pinned to the exact slug;
+   * their next send will recreate the backend and resolve credentials again.
+   */
+  async invalidateConnectionAuth(connectionSlug: string): Promise<void> {
+    for (const managed of this.sessions.values()) {
+      if (managed.llmConnection !== connectionSlug || !managed.agent) continue
+      await this.disposeManagedAgentRuntime(managed, `credential invalidation for ${connectionSlug}`)
+    }
+    resetSummarizationClient()
+  }
+
   async initialize(): Promise<void> {
     try {
       // Backfill missing `models` arrays on existing LLM connections

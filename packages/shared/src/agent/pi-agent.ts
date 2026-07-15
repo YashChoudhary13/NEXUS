@@ -37,7 +37,8 @@ import { getModelById } from '../config/models.ts';
 
 // BaseAgent provides common functionality
 import { BaseAgent } from './base-agent.ts';
-import type { Workspace } from '../config/storage.ts';
+import { updateLlmConnection, type Workspace } from '../config/storage.ts';
+import { isCanonicalChatGptOAuthSlug } from '../config/llm-connections.ts';
 
 // Event adapter
 import { PiEventAdapter } from './backend/pi/event-adapter.ts';
@@ -51,9 +52,17 @@ import type { ProjectPromptContext } from '../projects/types.ts';
 
 // Credential manager for token storage
 import { getCredentialManager } from '../credentials/manager.ts';
+import {
+  captureLlmCredentialAccessEpoch,
+  captureLlmCredentialRefreshEpoch,
+  isLlmCredentialAccessCurrent,
+  isLlmCredentialRefreshCurrent,
+  withLlmCredentialCommit,
+} from '../credentials/llm-credential-lifecycle.ts';
 
 // ChatGPT OAuth token refresh (used when Pi routes ChatGPT auth)
 import { refreshChatGptTokens } from '../auth/chatgpt-oauth.ts';
+import { parseChatGptIdToken } from '../auth/oauth-identity.ts';
 
 // Session-scoped tool callbacks (for SubmitPlan, source auth, etc.)
 import {
@@ -109,6 +118,24 @@ import { saveBinaryResponse } from '../utils/binary-detection.ts';
 // ============================================================
 // PiAgent Implementation
 // ============================================================
+
+type PiAuthCredential =
+  | { type: 'api_key'; key: string }
+  | { type: 'oauth'; access: string; refresh: string; expires: number }
+  | { type: 'iam'; accessKeyId: string; secretAccessKey: string; region?: string; sessionToken?: string };
+
+interface ResolvedPiAuth {
+  provider: string;
+  credential: PiAuthCredential;
+  /** Internal lease; never forwarded to the subprocess. */
+  credentialAccessEpoch?: number;
+}
+
+type PiAuthPayload = Pick<ResolvedPiAuth, 'provider' | 'credential'>;
+
+function toPiAuthPayload(resolved: ResolvedPiAuth | null): PiAuthPayload | null {
+  return resolved ? { provider: resolved.provider, credential: resolved.credential } : null;
+}
 
 /** Backend-executed session tools currently supported by PiAgent. */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
@@ -424,6 +451,10 @@ export class PiAgent extends BaseAgent {
    */
   private async spawnSubprocess(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
+    const usesServerOwnedPiOAuth = this.config.authType === 'oauth'
+      && (runtime.piAuthProvider === 'openai-codex' || runtime.piAuthProvider === 'github-copilot');
+    const runtimeBaseUrl = usesServerOwnedPiOAuth ? undefined : runtime.baseUrl;
+    const runtimeCustomEndpoint = usesServerOwnedPiOAuth ? undefined : runtime.customEndpoint;
     const piServerPath = runtime.paths?.piServer;
     if (!piServerPath) {
       throw new Error('piServerPath not configured. Cannot spawn Pi subprocess.');
@@ -472,9 +503,24 @@ export class PiAgent extends BaseAgent {
     // Retrieve auth credentials for the subprocess.
     // Custom endpoint mode must NOT fall back to global API keys — keyless local endpoints
     // are valid, and non-local endpoints should fail explicitly instead of using unrelated creds.
-    const piAuth = await this.getPiAuth();
-    const isCustomEndpointMode = !!runtime.customEndpoint;
-    const legacyApiKey = (!piAuth && !isCustomEndpointMode) ? await this.getApiKey() : undefined;
+    const slug = this.config.connectionSlug || 'pi';
+    const resolvedPiAuth = await this.getPiAuth();
+    const usesCredentialLifecycle = runtime.piAuthProvider === 'openai-codex'
+      || runtime.piAuthProvider === 'github-copilot'
+      || isCanonicalChatGptOAuthSlug(slug);
+    const currentPiAuth = (): PiAuthPayload | null => {
+      if (!usesCredentialLifecycle) return toPiAuthPayload(resolvedPiAuth);
+      const lease = resolvedPiAuth?.credentialAccessEpoch;
+      return lease !== undefined && isLlmCredentialAccessCurrent(slug, lease)
+        ? toPiAuthPayload(resolvedPiAuth)
+        : null;
+    };
+    // Recheck the lease after credential I/O and immediately before OS spawn.
+    const piAuth = currentPiAuth();
+    const isCustomEndpointMode = !!runtimeCustomEndpoint;
+    const legacyApiKey = (!runtime.piAuthProvider && !isCustomEndpointMode && !usesCredentialLifecycle)
+      ? await this.getApiKey()
+      : undefined;
     if (isCustomEndpointMode && !piAuth) {
       this.debug('Custom endpoint mode: no provider credential configured, sending empty API key');
     }
@@ -541,6 +587,8 @@ export class PiAgent extends BaseAgent {
     const workingDirectory = this.config.session?.workingDirectory || cwd;
 
     // Send init command (flat structure matching subprocess InboundMessage type)
+    // No await occurs between this final lease check and token injection.
+    const initPiAuth = currentPiAuth();
     this.send({
       type: 'init',
       apiKey: legacyApiKey || '',
@@ -556,9 +604,9 @@ export class PiAgent extends BaseAgent {
       providerType: this.config.providerType,
       authType: this.config.authType,
       workspaceId: this.config.workspace.id,
-      piAuth,
-      baseUrl: runtime.baseUrl,
-      customEndpoint: runtime.customEndpoint,
+      piAuth: initPiAuth,
+      baseUrl: runtimeBaseUrl,
+      customEndpoint: runtimeCustomEndpoint,
       customModels: runtime.customModels,
       // Branch params for Pi SDK session fork
       branchFromSdkSessionId: this.config.session?.branchFromSdkSessionId,
@@ -636,22 +684,40 @@ export class PiAgent extends BaseAgent {
    * modules use directly. The OAuth exchange happens on the Craft side; by the time
    * it reaches Pi, it's just an access token.
    */
-  private async getPiAuth(): Promise<{
-    provider: string;
-    credential:
-      | { type: 'api_key'; key: string }
-      | { type: 'oauth'; access: string; refresh: string; expires: number }
-      | { type: 'iam'; accessKeyId: string; secretAccessKey: string; region?: string; sessionToken?: string }
-  } | null> {
+  private async getPiAuth(): Promise<ResolvedPiAuth | null> {
     const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
+    const slug = this.config.connectionSlug || 'pi';
+    const isCanonicalChatGpt = isCanonicalChatGptOAuthSlug(slug);
     if (!piAuthProvider) return null;
+    if (isCanonicalChatGpt && piAuthProvider !== 'openai-codex') {
+      this.debug(`Rejected conflicting provider routing for canonical ChatGPT slug: ${piAuthProvider}`);
+      return null;
+    }
 
     try {
       const credentialManager = getCredentialManager();
-      const slug = this.config.connectionSlug || 'pi';
+      const usesCredentialLifecycle = piAuthProvider === 'openai-codex'
+        || piAuthProvider === 'github-copilot'
+        || isCanonicalChatGpt;
+      const credentialAccessEpoch = usesCredentialLifecycle
+        ? captureLlmCredentialAccessEpoch(slug)
+        : undefined;
+
+      if (usesCredentialLifecycle && credentialAccessEpoch === undefined) {
+        this.debug(`Credential access revoked for Pi provider: ${piAuthProvider}`);
+        return null;
+      }
 
       if (this.config.authType === 'oauth') {
         const oauth = await credentialManager.getLlmOAuth(slug);
+        if (
+          usesCredentialLifecycle
+          && (credentialAccessEpoch === undefined
+            || !isLlmCredentialAccessCurrent(slug, credentialAccessEpoch))
+        ) {
+          this.debug(`Discarded stale OAuth credential read for Pi provider: ${piAuthProvider}`);
+          return null;
+        }
         if (oauth?.accessToken) {
           // Copilot: pass full OAuth credential so the Pi SDK can derive the
           // correct API endpoint from the Copilot token's proxy-ep field.
@@ -667,6 +733,7 @@ export class PiAgent extends BaseAgent {
                 refresh: oauth.refreshToken,
                 expires: oauth.expiresAt ?? 0,
               },
+              credentialAccessEpoch,
             };
           }
           // Other OAuth providers: pass as api_key (bearer token)
@@ -674,6 +741,7 @@ export class PiAgent extends BaseAgent {
           return {
             provider: piAuthProvider,
             credential: { type: 'api_key', key: oauth.accessToken },
+            credentialAccessEpoch,
           };
         }
       } else if (this.config.authType === 'iam_credentials') {
@@ -761,6 +829,25 @@ export class PiAgent extends BaseAgent {
     if (this.config.authType !== 'oauth') return;
 
     const slug = this.config.connectionSlug || 'pi';
+    const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
+    const isCanonicalChatGpt = isCanonicalChatGptOAuthSlug(slug);
+    if (isCanonicalChatGpt && piAuthProvider !== 'openai-codex') {
+      this.debug(`Skipping token refresh for conflicting canonical ChatGPT routing on slug "${slug}"`);
+      return;
+    }
+    const usesCredentialLifecycle = piAuthProvider === 'openai-codex'
+      || piAuthProvider === 'github-copilot'
+      || isCanonicalChatGpt;
+    const refreshEpoch = usesCredentialLifecycle
+      ? captureLlmCredentialRefreshEpoch(slug)
+      : undefined;
+    if (usesCredentialLifecycle && refreshEpoch === undefined) {
+      this.debug(`Skipping token refresh for inactive credential generation on slug "${slug}"`);
+      return;
+    }
+    const isRefreshGenerationCurrent = () => !usesCredentialLifecycle || (
+      refreshEpoch !== undefined && isLlmCredentialRefreshCurrent(slug, refreshEpoch)
+    );
 
     // Global mutex — if another PiAgent instance on the same connection slug
     // is already refreshing, just wait for that to finish and push the
@@ -769,9 +856,11 @@ export class PiAgent extends BaseAgent {
     if (existing) {
       this.debug(`Waiting on existing refresh for slug "${slug}"`);
       await existing;
+      if (!isRefreshGenerationCurrent()) return;
       // The other instance refreshed the credential store — push to our subprocess
       if (this.subprocess) {
-        const piAuth = await this.getPiAuth();
+        const resolvedPiAuth = await this.getPiAuth();
+        const piAuth = toPiAuthPayload(resolvedPiAuth);
         if (piAuth) {
           this.send({ type: 'token_update', piAuth });
           this.debug('Pushed credentials refreshed by sibling instance');
@@ -781,7 +870,6 @@ export class PiAgent extends BaseAgent {
     }
 
     const refreshPromise = (async () => {
-      const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
       const credentialManager = getCredentialManager();
       const stored = await credentialManager.getLlmOAuth(slug);
 
@@ -792,30 +880,65 @@ export class PiAgent extends BaseAgent {
       }
 
       try {
+        let committed = false;
         if (piAuthProvider === 'github-copilot') {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
           const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
-          await credentialManager.setLlmOAuth(slug, {
-            accessToken: newCreds.access,
-            refreshToken: newCreds.refresh,
-            expiresAt: newCreds.expires,
+          committed = await withLlmCredentialCommit(slug, async () => {
+            if (!isRefreshGenerationCurrent()) return false;
+            await credentialManager.setLlmOAuth(slug, {
+              accessToken: newCreds.access,
+              refreshToken: newCreds.refresh,
+              expiresAt: newCreds.expires,
+            });
+            return isRefreshGenerationCurrent();
           });
         } else {
           // ChatGPT Plus: use existing refresh utility
           const newTokens = await refreshChatGptTokens(stored.refreshToken);
-          await credentialManager.setLlmOAuth(slug, {
-            accessToken: newTokens.accessToken,
-            idToken: newTokens.idToken,
-            refreshToken: newTokens.refreshToken,
-            expiresAt: newTokens.expiresAt,
+          committed = await withLlmCredentialCommit(slug, async () => {
+            if (!isRefreshGenerationCurrent()) return false;
+            await credentialManager.setLlmOAuth(slug, {
+              accessToken: newTokens.accessToken,
+              idToken: newTokens.idToken ?? stored.idToken,
+              refreshToken: newTokens.refreshToken,
+              expiresAt: newTokens.expiresAt,
+            });
+            if (!isRefreshGenerationCurrent()) return false;
+
+            // Identity persistence is deliberately fail-soft and slug-scoped. A missing or
+            // malformed refreshed ID token preserves the last verified profile and must not
+            // turn a successful credential refresh into an authentication failure.
+            if (newTokens.idToken) {
+              try {
+                const identity = parseChatGptIdToken(newTokens.idToken);
+                if (identity) {
+                  updateLlmConnection(slug, {
+                    oauthAccountUuid: identity.account?.uuid,
+                    oauthAccountEmail: identity.account?.emailAddress,
+                    oauthOrganizationUuid: identity.organization?.uuid,
+                    oauthOrganizationName: identity.organization?.name,
+                    oauthProfileVerifiedAt: Date.now(),
+                  });
+                }
+              } catch (identityError) {
+                this.debug(`Identity refresh persistence failed: ${identityError instanceof Error ? identityError.message : String(identityError)}`);
+              }
+            }
+            return true;
           });
+        }
+        if (!committed) {
+          this.debug(`Discarded stale token refresh for slug "${slug}"`);
+          return;
         }
         this.debug('Token refresh successful');
 
         // Push refreshed credentials to running subprocess
-        if (this.subprocess) {
-          const piAuth = await this.getPiAuth();
+        if (this.subprocess && isRefreshGenerationCurrent()) {
+          const resolvedPiAuth = await this.getPiAuth();
+          const piAuth = toPiAuthPayload(resolvedPiAuth);
           if (piAuth) {
             this.send({ type: 'token_update', piAuth });
             this.debug('Pushed refreshed credentials to subprocess');
@@ -1892,6 +2015,9 @@ export class PiAgent extends BaseAgent {
     const id = `runtime-config-${++this.rpcIdCounter}`;
     const timeoutMs = 15_000;
     const runtime = update.runtime ?? {};
+    const authType = update.authType ?? this.config.authType;
+    const usesServerOwnedPiOAuth = authType === 'oauth'
+      && (runtime.piAuthProvider === 'openai-codex' || runtime.piAuthProvider === 'github-copilot');
 
     return new Promise<boolean>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1916,8 +2042,8 @@ export class PiAgent extends BaseAgent {
         model: update.model,
         providerType: update.providerType,
         authType: update.authType,
-        baseUrl: runtime.baseUrl,
-        customEndpoint: runtime.customEndpoint,
+        baseUrl: usesServerOwnedPiOAuth ? undefined : runtime.baseUrl,
+        customEndpoint: usesServerOwnedPiOAuth ? undefined : runtime.customEndpoint,
         customModels: runtime.customModels,
       });
     });

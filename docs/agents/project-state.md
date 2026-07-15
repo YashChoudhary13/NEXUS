@@ -3,12 +3,16 @@
 > **The single most important file for an agent starting cold.** Keep it truthful and current.
 > Update after every task (ritual in [`README.md`](./README.md)).
 
-- **Last updated:** 2026-07-14
+- **Last updated:** 2026-07-15
 - **Repo:** NEXUS — fork of Craft Agents. Baseline: upstream commit `4289b16` (v0.11.1).
-- **Branch:** `main` (fork `origin/main`). `upstream` push URL is **DISABLED** (safety).
-- **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 SIGNED OFF 2026-07-14 (D-020…D-023) —
-  implementation authorized**, delegated via the
-  [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); first act = S1 spike.
+- **Branch:** `feature/account-identity` in an isolated worktree, cut from `develop`; the
+  preceding `spike/s1-multi-codex` branch remains throwaway and will never be merged.
+  `upstream` push URL is **DISABLED** (safety).
+- **Phase:** ✅ Phase 0 COMPLETE → **Phase 1 plan signed off 2026-07-14 (D-020…D-023) —
+  implementation authorized, but the Phase 1 implementation is NOT complete**, delegated via the
+  [Codex kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md); S1 passed the PR-1A
+  engineering gate and **PR-1A is implemented + locally verified; review/merge is pending**.
+  PR-1B through PR-1F remain unimplemented.
   Roadmap: [`../product/roadmap.md`](../product/roadmap.md).
 
 ---
@@ -18,8 +22,13 @@
 The master product plan (**NEXUS = Chat + Swarm + Brain**) was adopted 2026-07-13 —
 canonical snapshot at
 [`../product/nexus-master-plan-2026-07-13.md`](../product/nexus-master-plan-2026-07-13.md).
-Phase 0 (fork, run, audit, document) is nearly done. **No product source code has been
-modified** — all work so far is investigation, validation, planning, and documentation.
+Phase 0 is complete. Phase 1 S1 passed its PR-1A engineering gate: both OAuth logins,
+built-in validations, per-principal chats, and clean-restart restoration of both slug-bound
+connections/sessions passed. The observed users share one selected runtime workspace, so the
+overall “two different subscriptions” billing criterion remains `[OPEN]` for the phase gate.
+**PR-1A provider-neutral identity capture is complete on its feature branch and ready for
+review/merge into `develop`. The overall Phase 1 is not complete; PR-1B through PR-1F and the
+open billing acceptance criterion remain.**
 
 ## Done ✅
 
@@ -41,13 +50,20 @@ modified** — all work so far is investigation, validation, planning, and docum
   closed, `CRAFT_CONFIG_DIR` caveat documented); **detailed Phase 1 implementation plan
   produced** → [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
   **Phase 0 = COMPLETE.**
+- **2026-07-15:** PR-1A implemented on `feature/account-identity`: provider-neutral ChatGPT
+  JWT identity, server-owned first-login/reauth persistence, exact-slug runtime invalidation,
+  credential lifecycle epochs, durable atomic whole-store replacement, retry-safe logout/delete,
+  provider-specific OAuth target fences, and ChatGPT/Copilot/Claude OAuth race hardening.
+  Verification: account suite 94 pass + exact-runtime filter 1 pass (**418 assertions total**),
+  full shared **3,015 pass / 12 skip / 0 fail**, four relevant typechecks clean, complete Electron
+  build clean apart from inherited warnings. Full server-core adds ten passing tests over clean
+  `develop` and retains the same one inherited order-dependent runtime-config failure. No
+  stored-schema or credential-format migration.
 
 ## Next up ⏭️ (in order)
 
-1. **Phase 1 implementation (delegated to Codex,
-   [kickoff prompt](../plans/phase-1-kickoff-prompt-codex.md))**: **S1 spike first** (verify
-   two simultaneous Codex logins end-to-end; the owner performs the real OAuth logins), record
-   claim findings in the plan, then PR-1A → 1B → 1C/1D/1F → 1E per
+1. **Review and merge PR-1A provider-neutral identity capture** from
+   `feature/account-identity` into `develop`; then continue PR-1B → 1C/1D/1F → 1E per
    [`../plans/phase-1-multi-account-chat.md`](../plans/phase-1-multi-account-chat.md).
    Branches off `develop`, PRs → `develop` (D-023).
 2. **PR #1 (branding/compliance)** — plan approved, **blocked on owner artwork** (D-008) and
@@ -56,7 +72,9 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Blockers / owner input needed
 
-- ⏳ **S1 spike logins** — needs the owner interactively (two real ChatGPT/Codex accounts).
+- ❓ **Phase 1 billing acceptance wording** — S1 proved two distinct user principals in one
+  selected runtime workspace, not two independently routed subscription workspaces. Resolve
+  or rerun that criterion before Phase 1 closes; it does not block PR-1A.
 - ⏳ **PR #1 artwork** (app icon master + wordmark) — owner is providing (D-008).
 - ⏳ **PR #1 implementation go-ahead.**
 - ❓ Open questions listed in [`../product/roadmap.md`](../product/roadmap.md) §Open questions.
@@ -73,6 +91,42 @@ modified** — all work so far is investigation, validation, planning, and docum
 
 ## Changelog / handoff log (newest first — append, never rewrite)
 
+- **2026-07-15 — PR-1A implementation and local verification complete.** ChatGPT OAuth now
+  derives the human principal from provider JWT claims without confusing it with the runtime
+  workspace; credentials and identity share one server-owned per-slug generation. Logout,
+  delete, refresh, reauth, and runtime disposal are race-tested, encrypted-store writes are
+  globally serialized, atomically replaced, and retry-safe across restart, and Claude/Copilot
+  handlers cannot target a ChatGPT slug or install stale OAuth results. Pinned-Bun gates: 95
+  focused tests / 418 assertions total, full shared suite 3,015 pass / 12 skip / 0 fail, relevant
+  typechecks and full Electron build pass. A clean-`develop` comparison proves the one full
+  server-suite failure is inherited and unchanged. No Phase 1 branch has merged to `develop`;
+  PR-1B through PR-1F and the independent-billing acceptance nuance remain `[OPEN]`.
+- **2026-07-14 — S1 passed the PR-1A gate; implementation started.** Clean restart restored
+  both connection rows and both original sessions with exact, locked slugs; safe credential
+  inspection still found both slug-scoped entries. OpenAI's own Codex parser confirms the
+  distinct `chatgpt_user_id` values are user principals while their shared
+  `chatgpt_account_id` is the selected organization/workspace. Recorded the unresolved
+  billing-criterion nuance honestly, created `feature/account-identity` from `develop`, and
+  began PR-1A. The throwaway spike branch remains unmerged.
+- **2026-07-14 — S1 account #2 and pre-restart chats passed; restart verdict pending.** The
+  provider accepted simultaneous OAuth for `chatgpt-plus` and `chatgpt-plus-2`; both built-in
+  validations and one slug-locked chat per connection passed. Redacted comparison found
+  distinct subjects, emails, ChatGPT user/account-user IDs, and non-overlapping organization
+  sets, but the same `chatgpt_account_id` routing value across both logins. The unchanged app
+  was shut down cleanly and relaunched with the same config. S1 still awaits both restored
+  chats and owner confirmation whether these are separate subscriptions or seats/users in a
+  shared workspace; PR-1A remains gated.
+- **2026-07-14 — S1 multi-Codex spike started; account #1 passed, account #2 pending.** Created
+  isolated throwaway worktree/branch `spike/s1-multi-codex`, installed and used Bun 1.3.10,
+  and launched the unchanged app with scratch global config. Owner completed real OAuth for
+  `chatgpt-plus`; exchange, encrypted persistence, model refresh, auth reinitialization, and
+  built-in validation passed. A keys-only inspection recorded the real ID-token claim shape
+  without logging token/identity values: `email`, `sub`, and the namespaced OpenAI auth object
+  with ChatGPT account/user IDs plus organization `id`/`title`/`role`/`is_default`. Two plan
+  assumptions were corrected: the existing UI already mints suffixed OAuth slugs and exposes
+  Rename; `CRAFT_CONFIG_DIR` does not isolate `~/.craft-agent/credentials.enc`. **Not a spike
+  pass yet:** account #2, different-identity comparison, two chats, and restart remain; do not
+  begin PR-1A until they pass.
 - **2026-07-14 — Phase 1 signed off; execution delegated to Codex.** Owner answered the plan's
   §8 questions → decisions **D-020** (Copilot identity in Phase 1 as new PR-1F), **D-021**
   ("Craft Agents Backend" picker label replaced in PR-1D, ×6 locales), **D-022** (wording

@@ -264,6 +264,12 @@ export interface ISessionManager {
 
   reinitializeAuth(connectionSlug?: string): Promise<void>
   /**
+   * Dispose every live backend runtime bound to an exact connection slug.
+   * Used after credential removal so an already-running subprocess cannot
+   * continue with a token cached in memory.
+   */
+  invalidateConnectionAuth(connectionSlug: string): Promise<void>
+  /**
    * Push runtime updates (e.g. capability toggles) to every active session
    * that uses the given connection. Backstopped by the lazy refresh path in
    * `getOrCreateAgent`.

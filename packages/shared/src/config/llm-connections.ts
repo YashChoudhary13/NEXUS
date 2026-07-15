@@ -189,10 +189,10 @@ export interface LlmConnection {
    */
   midStreamBehavior?: MidStreamBehavior;
 
-  // --- Resolved Anthropic OAuth identity (issue #838) ---
-  // Captured from the token-exchange response; lets the UI flag two Claude
-  // connections that resolve to the same underlying account. All optional and
-  // fail-soft — absent identity simply means nothing is shown.
+  // --- Resolved provider-neutral OAuth identity ---
+  // Captured from a provider token exchange; lets the UI show the signed-in
+  // principal/workspace and later detect duplicate login contexts. All optional
+  // and fail-soft — absent identity simply means nothing is shown.
   oauthAccountUuid?: string;
   oauthAccountEmail?: string;
   oauthOrganizationUuid?: string;
@@ -221,6 +221,143 @@ export interface LlmConnectionWithStatus extends LlmConnection {
 
   /** Whether this is the global default connection */
   isDefault?: boolean;
+}
+
+/** Reserved server-owned Codex OAuth namespaces, including the migration slug. */
+export function isCanonicalChatGptOAuthSlug(slug: string): boolean {
+  return slug === 'codex' || /^chatgpt-plus(?:-\d+)?$/.test(slug);
+}
+
+/** Reserved server-owned Claude OAuth namespace. */
+export function isCanonicalClaudeOAuthSlug(slug: string): boolean {
+  return /^claude-max(?:-\d+)?$/.test(slug);
+}
+
+/** Reserved server-owned GitHub Copilot OAuth namespace. */
+export function isCanonicalGitHubCopilotOAuthSlug(slug: string): boolean {
+  return /^github-copilot(?:-\d+)?$/.test(slug);
+}
+
+/**
+ * Fail-safe read normalization for historical rows written before provider
+ * provenance became immutable. No credential may be routed through a custom
+ * endpoint or another backend merely because old config was poisoned.
+ */
+export function normalizeServerOwnedOAuthConnection(connection: LlmConnection): LlmConnection {
+  const hasAnthropicOAuth = connection.providerType === 'anthropic'
+    && connection.authType === 'oauth';
+  const storedClaude = hasAnthropicOAuth && !connection.piAuthProvider;
+  const storedCopilot = connection.providerType === 'pi'
+    && connection.authType === 'oauth'
+    && connection.piAuthProvider === 'github-copilot';
+  const storedChatGpt = connection.providerType === 'pi'
+    && connection.authType === 'oauth'
+    && connection.piAuthProvider === 'openai-codex';
+
+  // Canonical namespaces take precedence over mutable stored provenance. A
+  // conflicting historical row is quarantined instead of being silently
+  // adopted by another provider handler or runtime. The matching OAuth flow
+  // can repair ChatGPT rows; Claude/Copilot rows must be recreated.
+  if (isCanonicalChatGptOAuthSlug(connection.slug)) {
+    if (!storedChatGpt) {
+      return {
+        ...connection,
+        authType: 'none',
+        baseUrl: undefined,
+        customEndpoint: undefined,
+      };
+    }
+    return {
+      ...connection,
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'openai-codex',
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  if (isCanonicalClaudeOAuthSlug(connection.slug)) {
+    if (!storedClaude || connection.piAuthProvider) {
+      return {
+        ...connection,
+        authType: 'none',
+        baseUrl: undefined,
+        customEndpoint: undefined,
+      };
+    }
+    return {
+      ...connection,
+      providerType: 'anthropic',
+      authType: 'oauth',
+      piAuthProvider: undefined,
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  if (isCanonicalGitHubCopilotOAuthSlug(connection.slug)) {
+    if (!storedCopilot) {
+      return {
+        ...connection,
+        authType: 'none',
+        baseUrl: undefined,
+        customEndpoint: undefined,
+      };
+    }
+    return {
+      ...connection,
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'github-copilot',
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+
+  // Unknown/legacy slugs are protected by their complete stored provider
+  // tuple. In particular, every Anthropic OAuth row is official-endpoint-only
+  // because the legacy Claude credential is process-global.
+  if (storedChatGpt) {
+    return {
+      ...connection,
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'openai-codex',
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  if (storedClaude) {
+    return {
+      ...connection,
+      providerType: 'anthropic',
+      authType: 'oauth',
+      piAuthProvider: undefined,
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  if (storedCopilot) {
+    return {
+      ...connection,
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'github-copilot',
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  if (hasAnthropicOAuth) {
+    // An Anthropic OAuth row carrying Pi provenance is internally
+    // contradictory. Keep it official-endpoint-only but do not silently adopt
+    // it as Claude; provider handlers must continue to fail closed.
+    return {
+      ...connection,
+      authType: 'none',
+      baseUrl: undefined,
+      customEndpoint: undefined,
+    };
+  }
+  return connection;
 }
 
 // ============================================================
@@ -1009,8 +1146,13 @@ export async function resolveAuthEnvVars(
     return { envVars, success: true };
   }
 
-  // Set base URL if configured
-  if (connection.baseUrl) {
+  // Claude OAuth uses a process-global inherited credential. It is never
+  // eligible for client-authored endpoint routing, even if a raw historical
+  // object bypasses stored-config normalization.
+  const usesClaudeOAuth = connection.providerType === 'anthropic' && connection.authType === 'oauth';
+
+  // Set base URL if configured for non-OAuth Anthropic connections.
+  if (connection.baseUrl && !usesClaudeOAuth) {
     envVars.ANTHROPIC_BASE_URL = connection.baseUrl;
   }
 

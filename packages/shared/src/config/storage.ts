@@ -42,7 +42,7 @@ import type { Workspace, AuthType } from '@craft-agent/core/types';
 
 // Import LLM connection types and constants
 import type { LlmConnection } from './llm-connections.ts';
-import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection, isPiProvider, toBedrockNativeId, type LlmProviderType } from './llm-connections.ts';
+import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection, isPiProvider, normalizeServerOwnedOAuthConnection, toBedrockNativeId, type LlmProviderType } from './llm-connections.ts';
 import {
   getModelProvider,
   getModelById,
@@ -274,6 +274,14 @@ export function loadStoredConfig(): StoredConfig | null {
     // Must have workspaces array
     if (!Array.isArray(config.workspaces)) {
       return null;
+    }
+
+    // Server-owned OAuth connections are official-endpoint-only. Quarantine
+    // conflicting canonical rows and normalize legacy provider tuples before
+    // any model fetch, credential read, or runtime creation can observe them.
+    // A later config write persists the repair.
+    if (Array.isArray(config.llmConnections)) {
+      config.llmConnections = config.llmConnections.map(normalizeServerOwnedOAuthConnection);
     }
 
     // Expand path variables (~ and ${HOME}) for portability
@@ -2678,6 +2686,8 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
   if (index === -1) return false;
 
   const existing = connections[index]!;
+  const hasUpdate = (key: keyof Omit<LlmConnection, 'slug'>): boolean =>
+    Object.prototype.hasOwnProperty.call(updates, key);
   const toModelIds = (models?: Array<{ id: string } | string>): string[] =>
     (models ?? []).map(m => typeof m === 'string' ? m : m.id);
 
@@ -2690,22 +2700,24 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
     authType: updates.authType ?? existing.authType,
     createdAt: updates.createdAt ?? existing.createdAt,
     // Optional fields from updates or existing
-    baseUrl: updates.baseUrl !== undefined ? updates.baseUrl : existing.baseUrl,
+    // Explicit `undefined` clears routing metadata; omission preserves it.
+    baseUrl: hasUpdate('baseUrl') ? updates.baseUrl : existing.baseUrl,
     models: updates.models !== undefined ? updates.models : existing.models,
     defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
     modelSelectionMode: updates.modelSelectionMode !== undefined ? updates.modelSelectionMode : existing.modelSelectionMode,
     // Pi auth provider
     piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
     // Custom endpoint protocol (Anthropic/OpenAI compatible)
-    customEndpoint: updates.customEndpoint !== undefined ? updates.customEndpoint : existing.customEndpoint,
+    customEndpoint: hasUpdate('customEndpoint') ? updates.customEndpoint : existing.customEndpoint,
     // Mid-stream send behavior (steer vs queue) — read via resolveMidStreamBehavior()
     midStreamBehavior: updates.midStreamBehavior !== undefined ? updates.midStreamBehavior : existing.midStreamBehavior,
-    // Resolved Anthropic OAuth identity (issue #838) — preserved across unrelated saves
-    oauthAccountUuid: updates.oauthAccountUuid !== undefined ? updates.oauthAccountUuid : existing.oauthAccountUuid,
-    oauthAccountEmail: updates.oauthAccountEmail !== undefined ? updates.oauthAccountEmail : existing.oauthAccountEmail,
-    oauthOrganizationUuid: updates.oauthOrganizationUuid !== undefined ? updates.oauthOrganizationUuid : existing.oauthOrganizationUuid,
-    oauthOrganizationName: updates.oauthOrganizationName !== undefined ? updates.oauthOrganizationName : existing.oauthOrganizationName,
-    oauthProfileVerifiedAt: updates.oauthProfileVerifiedAt !== undefined ? updates.oauthProfileVerifiedAt : existing.oauthProfileVerifiedAt,
+    // Provider-neutral OAuth identity. Explicit `undefined` clears stale profile fields;
+    // omitting the property preserves them across unrelated saves.
+    oauthAccountUuid: hasUpdate('oauthAccountUuid') ? updates.oauthAccountUuid : existing.oauthAccountUuid,
+    oauthAccountEmail: hasUpdate('oauthAccountEmail') ? updates.oauthAccountEmail : existing.oauthAccountEmail,
+    oauthOrganizationUuid: hasUpdate('oauthOrganizationUuid') ? updates.oauthOrganizationUuid : existing.oauthOrganizationUuid,
+    oauthOrganizationName: hasUpdate('oauthOrganizationName') ? updates.oauthOrganizationName : existing.oauthOrganizationName,
+    oauthProfileVerifiedAt: hasUpdate('oauthProfileVerifiedAt') ? updates.oauthProfileVerifiedAt : existing.oauthProfileVerifiedAt,
     // Timestamps
     lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
   };
@@ -2790,16 +2802,6 @@ export function deleteLlmConnection(slug: string): boolean {
   } catch (error) {
     console.error('Failed to clean up workspace references:', error);
   }
-
-  // Clean up stored credentials for this connection (API keys, OAuth tokens)
-  // This is fire-and-forget but we log errors for debugging
-  const credentialManager = getCredentialManager();
-  credentialManager.delete({ type: 'llm_api_key', connectionSlug: slug }).catch((error) => {
-    console.error(`[storage] Failed to delete API key credential for connection '${slug}':`, error);
-  });
-  credentialManager.delete({ type: 'llm_oauth', connectionSlug: slug }).catch((error) => {
-    console.error(`[storage] Failed to delete OAuth credential for connection '${slug}':`, error);
-  });
 
   return true;
 }

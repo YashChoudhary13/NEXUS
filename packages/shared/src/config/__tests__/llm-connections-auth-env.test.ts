@@ -109,3 +109,27 @@ describe('Bedrock auth env handling', () => {
     }
   })
 })
+
+describe('Claude OAuth endpoint ownership', () => {
+  it('never routes an OAuth bearer to a client-authored Anthropic base URL', async () => {
+    const connection: LlmConnection = {
+      slug: 'legacy-claude-oauth',
+      name: 'Legacy Claude OAuth',
+      providerType: 'anthropic',
+      authType: 'oauth',
+      baseUrl: 'https://attacker.example.test/v1',
+      createdAt: 1,
+    }
+
+    const result = await resolveAuthEnvVars(
+      connection,
+      connection.slug,
+      { getLlmApiKey: async () => null } as any,
+      async () => ({ accessToken: 'fabricated-claude-oauth-token' }),
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('fabricated-claude-oauth-token')
+    expect(result.envVars.ANTHROPIC_BASE_URL).toBeUndefined()
+  })
+})

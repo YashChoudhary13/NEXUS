@@ -1,22 +1,62 @@
-import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type ChatGptOAuthResult, type LlmConnectionSetup, type OAuthIdentityDto } from '@craft-agent/shared/protocol'
 import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus, toBedrockNativeId, deriveBedrockRegionPrefix } from '@craft-agent/shared/config'
-import { getCredentialManager } from '@craft-agent/shared/credentials'
+import {
+  activateLlmOAuthCredentials,
+  beginLlmOAuthCredentialFlow,
+  cancelLlmOAuthCredentialFlow,
+  getCredentialManager,
+  isLlmCredentialEpochCurrent,
+  isLlmOAuthCredentialFlowCurrent,
+  revokeLlmCredentials,
+  withLlmCredentialCommit,
+} from '@craft-agent/shared/credentials'
 import { setSetupDeferred } from '@craft-agent/shared/config/storage'
+import { clearOAuthState } from '@craft-agent/shared/auth'
 import {
   resolveSetupTestConnectionHint,
   testBackendConnection,
   validateStoredBackendConnection,
 } from '@craft-agent/shared/agent/backend'
 import { getModelRefreshService } from '@craft-agent/server-core/model-fetchers'
-import { parseTestConnectionError, createBuiltInConnection, validateModelList, piAuthProviderDisplayName, validateSetupTestInput, setupTestRequiresApiKey, resolveCustomEndpointSetup } from '@craft-agent/server-core/domain'
+import { parseTestConnectionError, createBuiltInConnection, validateModelList, piAuthProviderDisplayName, validateSetupTestInput, setupTestRequiresApiKey, resolveCustomEndpointSetup, getServerOwnedOAuthBuiltInKind, isChatGptOAuthConnectionTarget, isClaudeOAuthConnectionTarget, isGitHubCopilotOAuthConnectionTarget, isServerOwnedOAuthBuiltInSlug } from '@craft-agent/server-core/domain'
 import { getWorkspaceOrThrow, buildBackendHostRuntimeContext } from '@craft-agent/server-core/handlers'
+import {
+  bumpLlmConnectionBindingVersion,
+  cancelClaudeOAuthFlow,
+  captureLlmConnectionBindingVersion,
+  isClaudeOAuthFlowForConnection,
+  isLlmConnectionBindingVersionCurrent,
+  withClaudeOAuthFlowMutation,
+  withLlmConnectionMutation,
+} from '@craft-agent/server-core/services'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { randomUUID } from 'node:crypto'
 import { CLIENT_OPEN_EXTERNAL } from '@craft-agent/server-core/transport'
 
-// Local OAuth state
-let copilotOAuthAbort: AbortController | null = null
+interface PendingCopilotOAuthFlow {
+  controller: AbortController
+  bindingVersion: number
+  oauthEpoch: number
+  generation: number
+  slugGeneration: number
+}
+
+// Local OAuth state. Keep the flow keyed by credential slug so logout can
+// abort and generation-fence exactly the credential it invalidates.
+const copilotOAuthAborts = new Map<string, PendingCopilotOAuthFlow>()
+let copilotOAuthGeneration = 0
+const copilotOAuthStartGenerationBySlug = new Map<string, number>()
+
+function advanceCopilotOAuthStartGeneration(connectionSlug: string): number {
+  const generation = (copilotOAuthStartGenerationBySlug.get(connectionSlug) ?? 0) + 1
+  copilotOAuthStartGenerationBySlug.set(connectionSlug, generation)
+  return generation
+}
+
+function isCopilotOAuthStartGenerationCurrent(connectionSlug: string, generation: number): boolean {
+  return copilotOAuthStartGenerationBySlug.get(connectionSlug) === generation
+}
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.LIST,
@@ -48,30 +88,258 @@ export const HANDLED_CHANNELS = [
 export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager } = deps
 
+  interface PendingChatGptIdentity {
+    identity?: OAuthIdentityDto
+    ownerClientId: string
+    oauthEpoch: number
+    startGeneration: number
+    createdAt: number
+  }
+
+  const configuredChatGptOAuthTtl = Number(process.env.CRAFT_TEST_CHATGPT_OAUTH_TTL_MS)
+  const CHATGPT_OAUTH_TTL_MS = Number.isFinite(configuredChatGptOAuthTtl) && configuredChatGptOAuthTtl > 0
+    ? configuredChatGptOAuthTtl
+    : 5 * 60 * 1000
+  // Credentials are global per connection slug, so there can be only one
+  // current pending identity receipt for a slug across all RPC clients.
+  const pendingChatGptIdentities = new Map<string, PendingChatGptIdentity>()
+  const chatGptOAuthStartGenerationBySlug = new Map<string, number>()
+  const pendingConnectionCreationBySlug = new Map<string, symbol>()
+
+  function advanceChatGptOAuthStartGeneration(connectionSlug: string): number {
+    const generation = (chatGptOAuthStartGenerationBySlug.get(connectionSlug) ?? 0) + 1
+    chatGptOAuthStartGenerationBySlug.set(connectionSlug, generation)
+    return generation
+  }
+
+  function isChatGptOAuthStartGenerationCurrent(connectionSlug: string, generation: number): boolean {
+    return chatGptOAuthStartGenerationBySlug.get(connectionSlug) === generation
+  }
+
+  function isServerOwnedChatGptOAuthConnection(
+    connectionSlug: string,
+    connection: LlmConnection | null | undefined = getLlmConnection(connectionSlug),
+  ): boolean {
+    // Canonical slugs are server-owned even before their config row exists.
+    // Existing reserved-provider rows also cover the legacy `codex` migration
+    // slug and fail closed for partially-poisoned historical config.
+    return isChatGptOAuthConnectionTarget(connectionSlug, connection)
+  }
+
+  type ServerOwnedOAuthKind = 'chatgpt' | 'claude' | 'copilot'
+
+  function getServerOwnedOAuthKind(
+    connectionSlug: string,
+    connection: LlmConnection | null | undefined = getLlmConnection(connectionSlug),
+  ): ServerOwnedOAuthKind | undefined {
+    if (isChatGptOAuthConnectionTarget(connectionSlug, connection)) return 'chatgpt'
+    if (isClaudeOAuthConnectionTarget(connectionSlug, connection)) return 'claude'
+    if (isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)) return 'copilot'
+    return undefined
+  }
+
+  function getStoredServerOwnedOAuthKind(
+    connection: LlmConnection | null | undefined,
+  ): ServerOwnedOAuthKind | undefined {
+    if (!connection || connection.authType !== 'oauth') return undefined
+    if (connection.providerType === 'pi' && connection.piAuthProvider === 'openai-codex') return 'chatgpt'
+    if (connection.providerType === 'anthropic' && !connection.piAuthProvider) return 'claude'
+    if (connection.providerType === 'pi' && connection.piAuthProvider === 'github-copilot') return 'copilot'
+    return undefined
+  }
+
+  function hasSameConnectionBinding(
+    left: LlmConnection | null | undefined,
+    right: LlmConnection | null | undefined,
+  ): boolean {
+    if (!left || !right) return left === right
+    return left.slug === right.slug
+      && left.providerType === right.providerType
+      && left.authType === right.authType
+      && left.piAuthProvider === right.piAuthProvider
+      && left.baseUrl === right.baseUrl
+      && left.customEndpoint?.api === right.customEndpoint?.api
+  }
+
+  function cleanupExpiredChatGptIdentities(): void {
+    const now = Date.now()
+    for (const [key, pending] of pendingChatGptIdentities) {
+      if (now - pending.createdAt > CHATGPT_OAUTH_TTL_MS) {
+        pendingChatGptIdentities.delete(key)
+      }
+    }
+  }
+
   // Unified handler for LLM connection setup
-  server.handle(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (_ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
+    let pendingConnectionCreationToken: symbol | undefined
     try {
       const manager = getCredentialManager()
+      let missingUpdateOnlyOAuthKind: ServerOwnedOAuthKind | undefined
+      const captureInitialBinding = () => withLlmConnectionMutation(setup.slug, async () => {
+        const connection = getLlmConnection(setup.slug)
+        const creationPending = !connection && pendingConnectionCreationBySlug.has(setup.slug)
+        if (!connection && !creationPending && !setup.updateOnly) {
+          pendingConnectionCreationToken = Symbol(setup.slug)
+          pendingConnectionCreationBySlug.set(setup.slug, pendingConnectionCreationToken)
+        }
+        missingUpdateOnlyOAuthKind = setup.updateOnly && !connection && !creationPending
+          ? getServerOwnedOAuthKind(setup.slug, connection)
+          : undefined
+
+        // Decide that an update-only target is missing while holding the same
+        // slug lock used by row creation/deletion. Otherwise a concurrent first
+        // setup could create the row between this decision and the snapshot,
+        // leaving a valid new row paired with a lifecycle we just revoked.
+        if (missingUpdateOnlyOAuthKind === 'chatgpt') {
+          advanceChatGptOAuthStartGeneration(setup.slug)
+          revokeLlmCredentials(setup.slug)
+          clearChatGptOAuthStateForSlug(setup.slug)
+        } else if (missingUpdateOnlyOAuthKind === 'copilot') {
+          advanceCopilotOAuthStartGeneration(setup.slug)
+          revokeLlmCredentials(setup.slug)
+          copilotOAuthAborts.get(setup.slug)?.controller.abort()
+          copilotOAuthAborts.delete(setup.slug)
+        } else if (missingUpdateOnlyOAuthKind === 'claude') {
+          revokeLlmCredentials(setup.slug)
+          if (isClaudeOAuthFlowForConnection(setup.slug)) {
+            cancelClaudeOAuthFlow()
+            clearOAuthState()
+          }
+        }
+
+        return {
+          connection,
+          creationPending,
+          version: captureLlmConnectionBindingVersion(setup.slug),
+        }
+      })
+      const initialBinding = setup.updateOnly && isClaudeOAuthConnectionTarget(setup.slug)
+        ? await withClaudeOAuthFlowMutation(captureInitialBinding)
+        : await captureInitialBinding()
+      if (initialBinding.creationPending) {
+        return { success: false, error: 'Connection setup is already in progress. Please try again.' }
+      }
 
       // Ensure connection exists in config
-      let connection = getLlmConnection(setup.slug)
+      let connection = initialBinding.connection
       let isNewConnection = false
       if (!connection) {
         // Reauth guard: if updateOnly is set, the connection must already exist.
         // Clean up any orphaned credentials from a preceding OAuth flow.
         if (setup.updateOnly) {
-          await manager.deleteLlmCredentials(setup.slug).catch(() => {})
-          deps.platform.logger?.warn(`[SETUP_LLM_CONNECTION] updateOnly rejected for missing slug: ${setup.slug}`)
-          return { success: false, error: 'Connection not found. Cannot re-authenticate a non-existent connection.' }
+          const cleanupMissingConnection = () => withLlmConnectionMutation(setup.slug, async () => {
+            if (
+              !isLlmConnectionBindingVersionCurrent(setup.slug, initialBinding.version)
+              || getLlmConnection(setup.slug)
+            ) {
+              return { success: false, error: 'Connection changed during setup. Please try again.' }
+            }
+
+            if (missingUpdateOnlyOAuthKind) {
+              revokeLlmCredentials(setup.slug)
+              clearChatGptOAuthStateForSlug(setup.slug)
+              copilotOAuthAborts.get(setup.slug)?.controller.abort()
+              copilotOAuthAborts.delete(setup.slug)
+              const affectedRuntimeSlugs = [
+                setup.slug,
+                ...(missingUpdateOnlyOAuthKind === 'claude'
+                  ? getLlmConnections()
+                      .filter(candidate => getStoredServerOwnedOAuthKind(candidate) === 'claude')
+                      .map(candidate => candidate.slug)
+                  : []),
+              ]
+              const runtimeInvalidations = affectedRuntimeSlugs.map(connectionSlug => (
+                sessionManager.invalidateConnectionAuth(connectionSlug)
+              ))
+              try {
+                await withLlmCredentialCommit(setup.slug, async () => {
+                  revokeLlmCredentials(setup.slug)
+                  clearChatGptOAuthStateForSlug(setup.slug)
+                  await manager.deleteLlmCredentials(setup.slug)
+                  if (missingUpdateOnlyOAuthKind === 'claude') {
+                    let survivingCredential = null
+                    for (const survivor of getLlmConnections()) {
+                      if (getStoredServerOwnedOAuthKind(survivor) !== 'claude') continue
+                      survivingCredential = await manager.getLlmOAuth(survivor.slug)
+                      if (survivingCredential?.accessToken) break
+                    }
+                    if (survivingCredential?.accessToken) {
+                      await manager.setClaudeOAuthCredentials({
+                        ...survivingCredential,
+                        source: 'native',
+                      })
+                    } else {
+                      await manager.deleteClaudeOAuthCredentials()
+                    }
+                  }
+                })
+              } finally {
+                await Promise.all(runtimeInvalidations)
+                await Promise.all(affectedRuntimeSlugs.map(connectionSlug => (
+                  sessionManager.invalidateConnectionAuth(connectionSlug)
+                )))
+              }
+            } else {
+              await manager.deleteLlmCredentials(setup.slug)
+            }
+            deps.platform.logger?.warn(`[SETUP_LLM_CONNECTION] updateOnly rejected for missing slug: ${setup.slug}`)
+            return { success: false, error: 'Connection not found. Cannot re-authenticate a non-existent connection.' }
+          })
+          return missingUpdateOnlyOAuthKind === 'claude'
+            ? await withClaudeOAuthFlowMutation(cleanupMissingConnection)
+            : await cleanupMissingConnection()
         }
         // Create connection with appropriate defaults based on slug
         connection = createBuiltInConnection(setup.slug, setup.baseUrl)
         isNewConnection = true
       }
 
+      // Resolve the trust boundary from the immutable server-side row (or a
+      // canonical built-in slug) before considering any client-authored setup
+      // fields. This includes the legacy `codex` migration connection.
+      const serverOwnedOAuthKind = getServerOwnedOAuthKind(setup.slug, connection)
+      const usesServerOwnedChatGptOAuth = serverOwnedOAuthKind === 'chatgpt'
+      const usesServerOwnedClaudeOAuth = serverOwnedOAuthKind === 'claude'
+      const usesServerOwnedCopilotOAuth = serverOwnedOAuthKind === 'copilot'
+      const usesServerOwnedOAuth = serverOwnedOAuthKind !== undefined
+      if (isServerOwnedOAuthBuiltInSlug(setup.slug) && !usesServerOwnedOAuth) {
+        return {
+          success: false,
+          error: 'This OAuth connection has conflicting provider metadata. Delete and recreate it.',
+        }
+      }
+      if (
+        !usesServerOwnedChatGptOAuth
+        && (connection.piAuthProvider === 'openai-codex' || setup.piAuthProvider === 'openai-codex')
+      ) {
+        return {
+          success: false,
+          error: 'The openai-codex provider is reserved for the server ChatGPT OAuth flow.',
+        }
+      }
+      if (usesServerOwnedChatGptOAuth && setup.credential) {
+        return {
+          success: false,
+          error: 'ChatGPT OAuth credentials must be established by the server OAuth flow.',
+        }
+      }
+      if (usesServerOwnedCopilotOAuth && setup.credential) {
+        return {
+          success: false,
+          error: 'GitHub Copilot OAuth credentials must be established by the server OAuth flow.',
+        }
+      }
+      if (usesServerOwnedClaudeOAuth && setup.credential) {
+        return {
+          success: false,
+          error: 'Claude OAuth credentials must be established by the server OAuth flow.',
+        }
+      }
+
       const updates: Partial<LlmConnection> = {}
-      const hasConfiguredBaseUrl = !!setup.baseUrl?.trim()
-      if (setup.baseUrl !== undefined) {
+      const hasConfiguredBaseUrl = !usesServerOwnedOAuth && !!setup.baseUrl?.trim()
+      if (!usesServerOwnedOAuth && setup.baseUrl !== undefined) {
         updates.baseUrl = setup.baseUrl?.trim() || undefined
 
         // Only mutate providerType for API key connections (not OAuth connections)
@@ -121,7 +389,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         if (isNewConnection && !updates.name && setup.baseUrl?.toLowerCase().includes('manifest.build')) {
           updates.name = 'Manifest'
         }
-      } else if (setup.baseUrl !== undefined) {
+      } else if (!usesServerOwnedOAuth && setup.baseUrl !== undefined) {
         // Base URL was explicitly updated without custom protocol config.
         // Treat this as non-custom mode and clear stale custom endpoint metadata.
         // Only downgrade existing connections — new ones already have the correct
@@ -135,7 +403,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
       // Pi API key flow: set piAuthProvider from setup data (e.g. 'anthropic', 'google', 'openai').
       // Skip when custom endpoint protocol is driving routing.
-      if (setup.piAuthProvider && !isCustomEndpointCompat) {
+      if (!usesServerOwnedOAuth && setup.piAuthProvider && !isCustomEndpointCompat) {
         updates.piAuthProvider = setup.piAuthProvider
         // Update connection name to show the actual provider (e.g. "Craft Agents Backend (Google AI Studio)")
         const providerName = piAuthProviderDisplayName(setup.piAuthProvider)
@@ -152,25 +420,79 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
       // Pi+Bedrock auth method override — set authType for IAM or environment auth.
       // providerType stays 'pi' (Bedrock routes through Pi SDK).
-      if (setup.bedrockAuthMethod) {
+      if (!usesServerOwnedOAuth && setup.bedrockAuthMethod) {
         updates.authType = setup.bedrockAuthMethod
       }
 
-      // Resolved Anthropic OAuth identity (issue #838). Threaded through SETUP so
-      // it persists on both the new-connection path (addLlmConnection) and the
-      // re-auth path (updateLlmConnection) via the shared pendingConnection/updates
-      // flow below. Fail-soft: only stamp when at least one identity block arrived.
-      const oauthIdentity = setup.oauthIdentity
-      if (oauthIdentity?.account || oauthIdentity?.organization) {
-        // Set only fields that are actually present, so `updates` never carries an
-        // explicit `undefined` (matches the guarded-assignment style used above and
-        // keeps the update intent clean). Missing sub-fields are simply not touched;
-        // on re-auth the storage allowlist then preserves any prior value.
-        if (oauthIdentity.account?.uuid) updates.oauthAccountUuid = oauthIdentity.account.uuid
-        if (oauthIdentity.account?.emailAddress) updates.oauthAccountEmail = oauthIdentity.account.emailAddress
-        if (oauthIdentity.organization?.uuid) updates.oauthOrganizationUuid = oauthIdentity.organization.uuid
-        if (oauthIdentity.organization?.name) updates.oauthOrganizationName = oauthIdentity.organization.name
-        updates.oauthProfileVerifiedAt = Date.now()
+      if (usesServerOwnedChatGptOAuth) {
+        // Provider/auth provenance and endpoint routing are server-owned. This
+        // also repairs canonical rows poisoned by an older vulnerable client.
+        updates.providerType = 'pi'
+        updates.authType = 'oauth'
+        updates.piAuthProvider = 'openai-codex'
+        updates.baseUrl = undefined
+        updates.customEndpoint = undefined
+      } else if (usesServerOwnedClaudeOAuth) {
+        updates.providerType = 'anthropic'
+        updates.authType = 'oauth'
+        updates.piAuthProvider = undefined
+        updates.baseUrl = undefined
+        updates.customEndpoint = undefined
+      } else if (usesServerOwnedCopilotOAuth) {
+        updates.providerType = 'pi'
+        updates.authType = 'oauth'
+        updates.piAuthProvider = 'github-copilot'
+        updates.baseUrl = undefined
+        updates.customEndpoint = undefined
+      }
+
+      // ChatGPT identity is server-owned: COMPLETE records one generation-bound
+      // receipt for the slug, and only the completing client may consume it here.
+      // Canonical slug provenance means mutable provider metadata cannot switch a
+      // Codex connection into the legacy client-authored Claude identity branch.
+      cleanupExpiredChatGptIdentities()
+      const pendingChatGptIdentity = usesServerOwnedChatGptOAuth
+        ? pendingChatGptIdentities.get(setup.slug)
+        : undefined
+      const canConsumePendingChatGptIdentity = !!(
+        pendingChatGptIdentity
+        && pendingChatGptIdentity.ownerClientId === ctx.clientId
+        && isChatGptOAuthStartGenerationCurrent(setup.slug, pendingChatGptIdentity.startGeneration)
+        && isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
+      )
+      const hasConflictingStoredChatGptBinding = usesServerOwnedChatGptOAuth
+        && !isNewConnection
+        && getStoredServerOwnedOAuthKind(connection) !== 'chatgpt'
+      if (hasConflictingStoredChatGptBinding && !canConsumePendingChatGptIdentity) {
+        return {
+          success: false,
+          error: 'Complete the server ChatGPT OAuth flow before repairing this connection.',
+        }
+      }
+      if (usesServerOwnedChatGptOAuth && isNewConnection && !canConsumePendingChatGptIdentity) {
+        return {
+          success: false,
+          error: 'Complete the server ChatGPT OAuth flow before creating this connection.',
+        }
+      }
+      const oauthIdentity = usesServerOwnedChatGptOAuth
+        ? (canConsumePendingChatGptIdentity ? pendingChatGptIdentity?.identity : undefined)
+        : setup.oauthIdentity
+      const hasUsableOAuthIdentity = !!(
+        oauthIdentity?.account?.uuid
+        || oauthIdentity?.account?.emailAddress
+        || oauthIdentity?.organization?.uuid
+        || oauthIdentity?.organization?.name
+      )
+      const shouldReplaceOAuthIdentity = usesServerOwnedChatGptOAuth
+        ? canConsumePendingChatGptIdentity
+        : hasUsableOAuthIdentity
+      if (shouldReplaceOAuthIdentity) {
+        updates.oauthAccountUuid = oauthIdentity?.account?.uuid
+        updates.oauthAccountEmail = oauthIdentity?.account?.emailAddress
+        updates.oauthOrganizationUuid = oauthIdentity?.organization?.uuid
+        updates.oauthOrganizationName = oauthIdentity?.organization?.name
+        updates.oauthProfileVerifiedAt = hasUsableOAuthIdentity ? Date.now() : undefined
       }
 
       const effectiveProviderType = updates.providerType ?? connection.providerType
@@ -235,43 +557,80 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         return { success: false, error: 'Default model is required for compatible endpoints.' }
       }
 
-      if (isNewConnection) {
-        const added = addLlmConnection(pendingConnection)
-        if (!added) {
-          deps.platform.logger?.error(`Failed to persist LLM connection: ${setup.slug} (config may be inaccessible)`)
-          return { success: false, error: 'Failed to save connection. Check server logs for details.' }
+      const persistSetup = () => withLlmConnectionMutation(setup.slug, async () => {
+        const currentConnection = getLlmConnection(setup.slug)
+        if (
+          !isLlmConnectionBindingVersionCurrent(setup.slug, initialBinding.version)
+          || (isNewConnection ? !!currentConnection : !hasSameConnectionBinding(connection, currentConnection))
+        ) {
+          return { success: false, error: 'Connection changed during setup. Please try again.' }
         }
-        deps.platform.logger?.info(`Created LLM connection: ${setup.slug}`)
-      } else if (Object.keys(updates).length > 0) {
-        const updated = updateLlmConnection(setup.slug, updates)
-        if (!updated) {
-          deps.platform.logger?.error(`Failed to update LLM connection: ${setup.slug}`)
-          return { success: false, error: 'Failed to update connection. Check server logs for details.' }
-        }
-        deps.platform.logger?.info(`Updated LLM connection settings: ${setup.slug}`)
-      }
 
-      // Store credential if provided (skip masked placeholders from GET_API_KEY)
-      const isMasked = setup.credential?.includes('••')
-      if (setup.credential && !isMasked) {
-        const authType = pendingConnection.authType
-        if (authType === 'oauth') {
-          await manager.setLlmOAuth(setup.slug, { accessToken: setup.credential })
-          deps.platform.logger?.info('Saved OAuth access token to LLM connection')
-        } else {
-          await manager.setLlmApiKey(setup.slug, setup.credential)
-          deps.platform.logger?.info('Saved API key to LLM connection')
+        if (canConsumePendingChatGptIdentity && pendingChatGptIdentity && (
+          pendingChatGptIdentities.get(setup.slug) !== pendingChatGptIdentity
+          || !isChatGptOAuthStartGenerationCurrent(setup.slug, pendingChatGptIdentity.startGeneration)
+          || !isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
+        )) {
+          return { success: false, error: 'ChatGPT OAuth changed during setup. Please try again.' }
         }
-      }
 
-      // Pi+Bedrock IAM credentials — stored separately from API keys
-      if (setup.iamCredentials) {
-        await manager.setLlmIamCredentials(setup.slug, {
-          ...setup.iamCredentials,
-          region: setup.awsRegion,
-        })
-        deps.platform.logger?.info('Saved IAM credentials to LLM connection')
-      }
+        if (usesServerOwnedClaudeOAuth) {
+          const restoredGlobalCredential = await withLlmCredentialCommit(setup.slug, async () => {
+            const scoped = await manager.getLlmOAuth(setup.slug)
+            if (!scoped?.accessToken) return !isNewConnection
+            await manager.setClaudeOAuthCredentials({ ...scoped, source: 'native' })
+            return true
+          })
+          if (!restoredGlobalCredential) {
+            return { success: false, error: 'Complete the server Claude OAuth flow before setup.' }
+          }
+        }
+
+        if (isNewConnection) {
+          const added = addLlmConnection(pendingConnection)
+          if (!added) {
+            deps.platform.logger?.error(`Failed to persist LLM connection: ${setup.slug} (config may be inaccessible)`)
+            return { success: false, error: 'Failed to save connection. Check server logs for details.' }
+          }
+          bumpLlmConnectionBindingVersion(setup.slug)
+          deps.platform.logger?.info(`Created LLM connection: ${setup.slug}`)
+        } else if (Object.keys(updates).length > 0) {
+          const bindingChanged = !hasSameConnectionBinding(currentConnection, pendingConnection)
+          const updated = updateLlmConnection(setup.slug, updates)
+          if (!updated) {
+            deps.platform.logger?.error(`Failed to update LLM connection: ${setup.slug}`)
+            return { success: false, error: 'Failed to update connection. Check server logs for details.' }
+          }
+          if (bindingChanged) bumpLlmConnectionBindingVersion(setup.slug)
+          deps.platform.logger?.info(`Updated LLM connection settings: ${setup.slug}`)
+        }
+
+        // Store credentials in the same slug-mutation boundary as the row.
+        const isMasked = setup.credential?.includes('••')
+        if (!usesServerOwnedOAuth && setup.credential && !isMasked) {
+          const authType = pendingConnection.authType
+          if (authType === 'oauth') {
+            await manager.setLlmOAuth(setup.slug, { accessToken: setup.credential })
+            deps.platform.logger?.info('Saved OAuth access token to LLM connection')
+          } else {
+            await manager.setLlmApiKey(setup.slug, setup.credential)
+            deps.platform.logger?.info('Saved API key to LLM connection')
+          }
+        }
+
+        if (setup.iamCredentials) {
+          await manager.setLlmIamCredentials(setup.slug, {
+            ...setup.iamCredentials,
+            region: setup.awsRegion,
+          })
+          deps.platform.logger?.info('Saved IAM credentials to LLM connection')
+        }
+        return { success: true }
+      })
+      const persisted = usesServerOwnedClaudeOAuth
+        ? await withClaudeOAuthFlowMutation(persistSetup)
+        : await persistSetup()
+      if (!persisted.success) return persisted
 
       // Set as default only if no default exists yet (first connection)
       if (!getDefaultLlmConnection()) {
@@ -303,11 +662,30 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       // Clear "Setup later" flag now that user has configured a provider
       setSetupDeferred(false)
 
+      // Consume only after the complete setup transaction succeeds. A failed
+      // setup can retry with the same server-owned identity until the short TTL.
+      if (
+        canConsumePendingChatGptIdentity
+        && pendingChatGptIdentity
+        && pendingChatGptIdentities.get(setup.slug) === pendingChatGptIdentity
+        && isChatGptOAuthStartGenerationCurrent(setup.slug, pendingChatGptIdentity.startGeneration)
+        && isLlmCredentialEpochCurrent(setup.slug, pendingChatGptIdentity.oauthEpoch)
+      ) {
+        pendingChatGptIdentities.delete(setup.slug)
+      }
+
       return { success: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger?.error('Failed to setup LLM connection:', message)
       return { success: false, error: message }
+    } finally {
+      if (
+        pendingConnectionCreationToken
+        && pendingConnectionCreationBySlug.get(setup.slug) === pendingConnectionCreationToken
+      ) {
+        pendingConnectionCreationBySlug.delete(setup.slug)
+      }
     }
   })
 
@@ -443,38 +821,115 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // If connection.slug exists and is found, updates it; otherwise creates new
   server.handle(RPC_CHANNELS.llmConnections.SAVE, async (_ctx, connection: LlmConnection): Promise<{ success: boolean; error?: string }> => {
     try {
-      // Check if this is an update or create
-      const existing = getLlmConnection(connection.slug)
-      if (existing) {
-        // Update existing connection (can't change slug)
-        const { slug: _slug, ...updates } = connection
-        const success = updateLlmConnection(connection.slug, updates)
-        if (!success) {
-          return { success: false, error: 'Failed to update connection' }
+      // Identity is derived from provider-issued OAuth claims, never from a
+      // generic client-authored connection object (remote clients use SAVE too).
+      const {
+        oauthAccountUuid: _oauthAccountUuid,
+        oauthAccountEmail: _oauthAccountEmail,
+        oauthOrganizationUuid: _oauthOrganizationUuid,
+        oauthOrganizationName: _oauthOrganizationName,
+        oauthProfileVerifiedAt: _oauthProfileVerifiedAt,
+        ...safeConnection
+      } = connection
+      const saved = await withLlmConnectionMutation(safeConnection.slug, async () => {
+        const existing = getLlmConnection(safeConnection.slug)
+        if (existing) {
+          // Generic saves can edit presentation/runtime settings, but cannot
+          // rewrite the connection's provider/auth provenance. Those fields are
+          // established by server-owned setup flows and the immutable slug.
+          const {
+            slug: _slug,
+            providerType: _providerType,
+            authType: _authType,
+            piAuthProvider: _piAuthProvider,
+            createdAt: _createdAt,
+            ...updates
+          } = safeConnection
+          const storedOAuthKind = getStoredServerOwnedOAuthKind(existing)
+          const builtInOAuthKind = getServerOwnedOAuthBuiltInKind(safeConnection.slug)
+          const hasCanonicalConflict = builtInOAuthKind !== undefined
+            && storedOAuthKind !== builtInOAuthKind
+          const oauthKind = hasCanonicalConflict ? undefined : storedOAuthKind
+          const endpointProtected = oauthKind !== undefined || builtInOAuthKind !== undefined
+          const protectedUpdates = hasCanonicalConflict
+            ? {
+                ...updates,
+                authType: 'none' as const,
+                baseUrl: undefined,
+                customEndpoint: undefined,
+              }
+            : oauthKind === 'chatgpt'
+            ? {
+                ...updates,
+                providerType: 'pi' as const,
+                authType: 'oauth' as const,
+                piAuthProvider: 'openai-codex',
+                baseUrl: undefined,
+                customEndpoint: undefined,
+              }
+            : oauthKind === 'claude'
+              ? {
+                  ...updates,
+                  providerType: 'anthropic' as const,
+                  authType: 'oauth' as const,
+                  piAuthProvider: undefined,
+                  baseUrl: undefined,
+                  customEndpoint: undefined,
+                }
+              : oauthKind === 'copilot'
+                ? {
+                    ...updates,
+                    providerType: 'pi' as const,
+                    authType: 'oauth' as const,
+                    piAuthProvider: 'github-copilot',
+                    baseUrl: undefined,
+                    customEndpoint: undefined,
+                  }
+                : endpointProtected
+                  ? { ...updates, baseUrl: undefined, customEndpoint: undefined }
+                  : updates
+          const bindingChanged = !hasSameConnectionBinding(existing, { ...existing, ...protectedUpdates })
+          const success = updateLlmConnection(safeConnection.slug, protectedUpdates)
+          if (!success) return { success: false, error: 'Failed to update connection' }
+          if (bindingChanged) bumpLlmConnectionBindingVersion(safeConnection.slug)
+        } else {
+          // Provider OAuth provenance is established only by the matching
+          // server-owned flow. Generic SAVE cannot create an OAuth row, reserve
+          // a built-in namespace, or adopt an orphan encrypted credential.
+          if (
+            safeConnection.authType === 'oauth'
+            || isServerOwnedOAuthBuiltInSlug(safeConnection.slug)
+            || safeConnection.piAuthProvider === 'openai-codex'
+            || safeConnection.piAuthProvider === 'github-copilot'
+          ) {
+            return {
+              success: false,
+              error: 'OAuth connections must be created through the matching server OAuth flow.',
+            }
+          }
+          const success = addLlmConnection(safeConnection)
+          if (!success) return { success: false, error: 'Connection with this slug already exists' }
+          bumpLlmConnectionBindingVersion(safeConnection.slug)
         }
-      } else {
-        // Create new connection
-        const success = addLlmConnection(connection)
-        if (!success) {
-          return { success: false, error: 'Connection with this slug already exists' }
-        }
-      }
-      deps.platform.logger?.info(`LLM connection saved: ${connection.slug}`)
+        return { success: true }
+      })
+      if (!saved.success) return saved
+      deps.platform.logger?.info(`LLM connection saved: ${safeConnection.slug}`)
       // Push runtime updates (e.g. supportsImages toggle) to live sessions on
       // this connection. Detached so SAVE doesn't block on the per-session
       // 15s `update_runtime_config` timeout when subprocesses are slow or
       // wedged. SessionManager serializes the refresh with the next send via
       // its per-session mutex, and the lazy `getOrCreateAgent` refresh remains
       // the correctness backstop if the detached push fails.
-      sessionManager.refreshConnectionRuntime(connection.slug).catch(error => {
+      sessionManager.refreshConnectionRuntime(safeConnection.slug).catch(error => {
         deps.platform.logger?.warn(
-          `Detached runtime push failed for ${connection.slug}: ${error instanceof Error ? error.message : error}`,
+          `Detached runtime push failed for ${safeConnection.slug}: ${error instanceof Error ? error.message : error}`,
         )
       })
       // Reinitialize auth if the saved connection is the current default
       // (updates env vars and summarization model override)
       const defaultSlug = getDefaultLlmConnection()
-      if (defaultSlug === connection.slug) {
+      if (defaultSlug === safeConnection.slug) {
         await sessionManager.reinitializeAuth()
       }
       return { success: true }
@@ -484,27 +939,122 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     }
   })
 
-  // Delete an LLM connection (at least one connection must remain)
+  // Delete an LLM connection.
   server.handle(RPC_CHANNELS.llmConnections.DELETE, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
+    // Fence OAuth work at request entry, before DELETE yields on the slug
+    // mutation queue. This also covers canonical first-login flows whose row
+    // has not been created yet.
+    const requestedOAuthKind = getServerOwnedOAuthKind(slug)
+    if (requestedOAuthKind === 'chatgpt') {
+      advanceChatGptOAuthStartGeneration(slug)
+      revokeLlmCredentials(slug)
+      clearChatGptOAuthStateForSlug(slug)
+    } else if (requestedOAuthKind === 'copilot') {
+      advanceCopilotOAuthStartGeneration(slug)
+      revokeLlmCredentials(slug)
+      copilotOAuthAborts.get(slug)?.controller.abort()
+      copilotOAuthAborts.delete(slug)
+    } else if (requestedOAuthKind === 'claude') {
+      revokeLlmCredentials(slug)
+      if (isClaudeOAuthFlowForConnection(slug)) {
+        cancelClaudeOAuthFlow()
+        clearOAuthState()
+      }
+    }
+
+    const runtimeInvalidations = new Map<string, Promise<void>>()
+    const beginRuntimeInvalidation = (connectionSlug: string) => {
+      if (!runtimeInvalidations.has(connectionSlug)) {
+        runtimeInvalidations.set(
+          connectionSlug,
+          sessionManager.invalidateConnectionAuth(connectionSlug),
+        )
+      }
+    }
     try {
-      const connection = getLlmConnection(slug)
-      if (!connection) {
-        return { success: false, error: 'Connection not found' }
-      }
-      // deleteLlmConnection handles the "at least one must remain" check
-      const success = deleteLlmConnection(slug)
-      if (success) {
-        // Stop any periodic model refresh timer for this connection
-        getModelRefreshService().stopConnection(slug)
-        // Also delete associated credentials
+      const deleteConnection = () => withLlmConnectionMutation(slug, async () => {
+        const connection = getLlmConnection(slug)
+        const oauthKind = connection
+          ? getServerOwnedOAuthKind(slug, connection)
+          : requestedOAuthKind
+        if (!connection && !oauthKind) return { success: false, error: 'Connection not found' }
+        const usesOAuthCredentialLifecycle = oauthKind !== undefined
+        const survivingClaudeOAuthConnections = oauthKind === 'claude'
+          ? getLlmConnections().filter(candidate => (
+              candidate.slug !== slug && getStoredServerOwnedOAuthKind(candidate) === 'claude'
+            ))
+          : []
         const credentialManager = getCredentialManager()
-        await credentialManager.deleteLlmCredentials(slug)
+        if (usesOAuthCredentialLifecycle) revokeLlmCredentials(slug)
+        clearChatGptOAuthStateForSlug(slug)
+        copilotOAuthAborts.get(slug)?.controller.abort()
+        copilotOAuthAborts.delete(slug)
+        beginRuntimeInvalidation(slug)
+        for (const survivor of survivingClaudeOAuthConnections) {
+          // Every live Claude subprocess may have inherited the process-global
+          // compatibility token that is about to be cleared/rebound.
+          beginRuntimeInvalidation(survivor.slug)
+        }
+        if (usesOAuthCredentialLifecycle) {
+          await withLlmCredentialCommit(slug, async () => {
+            revokeLlmCredentials(slug)
+            clearChatGptOAuthStateForSlug(slug)
+            const previousScoped = oauthKind === 'claude'
+              ? await credentialManager.getLlmOAuth(slug)
+              : null
+            try {
+              await credentialManager.deleteLlmCredentials(slug)
+              if (oauthKind === 'claude') {
+                let survivingCredential = null
+                for (const survivor of survivingClaudeOAuthConnections) {
+                  survivingCredential = await credentialManager.getLlmOAuth(survivor.slug)
+                  if (survivingCredential?.accessToken) break
+                }
+                if (survivingCredential?.accessToken) {
+                  await credentialManager.setClaudeOAuthCredentials({
+                    ...survivingCredential,
+                    source: 'native',
+                  })
+                } else {
+                  await credentialManager.deleteClaudeOAuthCredentials()
+                }
+              }
+            } catch (error) {
+              if (previousScoped) await credentialManager.setLlmOAuth(slug, previousScoped)
+              throw error
+            }
+          })
+        } else {
+          await credentialManager.deleteLlmCredentials(slug)
+        }
+
+        if (!connection) {
+          return { success: false, error: 'Connection not found' }
+        }
+
+        const success = deleteLlmConnection(slug)
+        if (!success) return { success: false, error: 'Failed to delete connection' }
+        bumpLlmConnectionBindingVersion(slug)
+        getModelRefreshService().stopConnection(slug)
         deps.platform.logger?.info(`LLM connection deleted: ${slug}`)
-      }
-      return { success }
+        return { success: true }
+      })
+      const result = requestedOAuthKind === 'claude'
+        ? await withClaudeOAuthFlowMutation(deleteConnection)
+        : await deleteConnection()
+      return result
     } catch (error) {
       deps.platform.logger?.error('Failed to delete LLM connection:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    } finally {
+      if (runtimeInvalidations.size > 0) {
+        await Promise.all(runtimeInvalidations.values())
+        await Promise.all(
+          [...runtimeInvalidations.keys()].map(connectionSlug => (
+            sessionManager.invalidateConnectionAuth(connectionSlug)
+          )),
+        )
+      }
     }
   })
 
@@ -618,16 +1168,41 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     codeVerifier: string
     connectionSlug: string
     ownerClientId: string
+    oauthEpoch: number
+    bindingVersion: number
+    startGeneration: number
     createdAt: number
+    expiryTimer?: ReturnType<typeof setTimeout>
   }
   const pendingChatGptFlows = new Map<string, PendingChatGptFlow>()
-  const CHATGPT_FLOW_TTL_MS = 5 * 60 * 1000
 
-  function cleanupExpiredChatGptFlows() {
+  function removePendingChatGptFlow(state: string): PendingChatGptFlow | undefined {
+    const flow = pendingChatGptFlows.get(state)
+    if (!flow) return undefined
+    pendingChatGptFlows.delete(state)
+    if (flow.expiryTimer) clearTimeout(flow.expiryTimer)
+    return flow
+  }
+
+  async function cleanupExpiredChatGptFlows(): Promise<void> {
     const now = Date.now()
+    const cancellations: Array<Promise<void>> = []
     for (const [state, flow] of pendingChatGptFlows) {
-      if (now - flow.createdAt > CHATGPT_FLOW_TTL_MS) {
-        pendingChatGptFlows.delete(state)
+      if (now - flow.createdAt > CHATGPT_OAUTH_TTL_MS) {
+        removePendingChatGptFlow(state)
+        cancellations.push(withLlmCredentialCommit(flow.connectionSlug, async () => {
+          cancelLlmOAuthCredentialFlow(flow.connectionSlug, flow.oauthEpoch)
+        }))
+      }
+    }
+    await Promise.all(cancellations)
+  }
+
+  function clearChatGptOAuthStateForSlug(connectionSlug: string): void {
+    pendingChatGptIdentities.delete(connectionSlug)
+    for (const [state, flow] of pendingChatGptFlows) {
+      if (flow.connectionSlug === connectionSlug) {
+        removePendingChatGptFlow(state)
       }
     }
   }
@@ -638,20 +1213,72 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     state: string
     flowId: string
   }> => {
-    cleanupExpiredChatGptFlows()
+    // Reserve request order before the first await. LOGOUT, DELETE, or a newer
+    // START can invalidate this request even before its PKCE flow is mapped.
+    const startGeneration = advanceChatGptOAuthStartGeneration(connectionSlug)
+    await cleanupExpiredChatGptFlows()
+    if (!isChatGptOAuthStartGenerationCurrent(connectionSlug, startGeneration)) {
+      throw new Error('ChatGPT OAuth flow was superseded or logged out')
+    }
+    cleanupExpiredChatGptIdentities()
     const { prepareChatGptOAuth } = await import('@craft-agent/shared/auth')
+    if (!isChatGptOAuthStartGenerationCurrent(connectionSlug, startGeneration)) {
+      throw new Error('ChatGPT OAuth flow was superseded or logged out')
+    }
 
     const prepared = prepareChatGptOAuth()
     const flowId = randomUUID()
+    // Credentials are slug-global: one newly-started login supersedes every
+    // older client flow and unconsumed identity receipt for this exact slug.
+    const flowBinding = await withLlmConnectionMutation(connectionSlug, async () => {
+      if (!isChatGptOAuthStartGenerationCurrent(connectionSlug, startGeneration)) {
+        throw new Error('ChatGPT OAuth flow was superseded or logged out')
+      }
+      if (!isServerOwnedChatGptOAuthConnection(connectionSlug)) {
+        throw new Error(`Invalid ChatGPT OAuth connection slug: ${connectionSlug}`)
+      }
+      const bindingVersion = captureLlmConnectionBindingVersion(connectionSlug)
+      const oauthEpoch = await withLlmCredentialCommit(connectionSlug, async () => {
+        if (!isChatGptOAuthStartGenerationCurrent(connectionSlug, startGeneration)) {
+          throw new Error('ChatGPT OAuth flow was superseded or logged out')
+        }
+        pendingChatGptIdentities.delete(connectionSlug)
+        return beginLlmOAuthCredentialFlow(connectionSlug)
+      })
+      return { bindingVersion, oauthEpoch }
+    })
 
-    pendingChatGptFlows.set(prepared.state, {
+    if (!isChatGptOAuthStartGenerationCurrent(connectionSlug, startGeneration)) {
+      await withLlmCredentialCommit(connectionSlug, async () => {
+        cancelLlmOAuthCredentialFlow(connectionSlug, flowBinding.oauthEpoch)
+      })
+      throw new Error('ChatGPT OAuth flow was superseded or logged out')
+    }
+
+    const pendingFlow: PendingChatGptFlow = {
       flowId,
       state: prepared.state,
       codeVerifier: prepared.codeVerifier,
       connectionSlug,
       ownerClientId: ctx.clientId,
+      oauthEpoch: flowBinding.oauthEpoch,
+      bindingVersion: flowBinding.bindingVersion,
+      startGeneration,
       createdAt: Date.now(),
-    })
+    }
+    pendingChatGptFlows.set(prepared.state, pendingFlow)
+    pendingFlow.expiryTimer = setTimeout(() => {
+      if (pendingChatGptFlows.get(prepared.state) !== pendingFlow) return
+      removePendingChatGptFlow(prepared.state)
+      void withLlmCredentialCommit(connectionSlug, async () => {
+        cancelLlmOAuthCredentialFlow(connectionSlug, flowBinding.oauthEpoch)
+      }).catch(error => {
+        deps.platform.logger?.warn(
+          `[ChatGPT OAuth] Failed to expire flow for ${connectionSlug}: ${error instanceof Error ? error.message : error}`,
+        )
+      })
+    }, CHATGPT_OAUTH_TTL_MS)
+    pendingFlow.expiryTimer.unref?.()
 
     deps.platform.logger?.info(`[ChatGPT OAuth] Flow started for ${connectionSlug} (flow=${flowId})`)
     return { authUrl: prepared.authUrl, state: prepared.state, flowId }
@@ -662,36 +1289,145 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     flowId: string
     code: string
     state: string
-  }): Promise<{ success: boolean; error?: string }> => {
+  }): Promise<ChatGptOAuthResult> => {
     const { flowId, code, state } = args
     const flow = pendingChatGptFlows.get(state)
 
     if (!flow) throw new Error('Unknown or expired ChatGPT OAuth flow')
     if (flow.flowId !== flowId) throw new Error('Flow ID mismatch')
     if (flow.ownerClientId !== ctx.clientId) throw new Error('OAuth flow owned by different client')
-    if (Date.now() - flow.createdAt > CHATGPT_FLOW_TTL_MS) {
-      pendingChatGptFlows.delete(state)
+    if (Date.now() - flow.createdAt > CHATGPT_OAUTH_TTL_MS) {
+      removePendingChatGptFlow(state)
+      await withLlmCredentialCommit(flow.connectionSlug, async () => {
+        cancelLlmOAuthCredentialFlow(flow.connectionSlug, flow.oauthEpoch)
+      })
       throw new Error('ChatGPT OAuth flow expired')
+    }
+    if (!isLlmOAuthCredentialFlowCurrent(flow.connectionSlug, flow.oauthEpoch)) {
+      removePendingChatGptFlow(state)
+      return { success: false, error: 'ChatGPT OAuth flow was superseded or logged out' }
     }
 
     try {
-      const { exchangeChatGptTokens } = await import('@craft-agent/shared/auth')
+      const { exchangeChatGptTokens, parseChatGptIdToken } = await import('@craft-agent/shared/auth')
       const credentialManager = getCredentialManager()
 
       const tokens = await exchangeChatGptTokens(code, flow.codeVerifier)
+      const identity = parseChatGptIdToken(tokens.idToken)
+      const hasUsableIdentity = !!(
+        identity?.account?.uuid
+        || identity?.account?.emailAddress
+        || identity?.organization?.uuid
+        || identity?.organization?.name
+      )
+      let replacedExistingConnection = false
+      const committed = await withLlmConnectionMutation(flow.connectionSlug, async () => (
+        withLlmCredentialCommit(flow.connectionSlug, async () => {
+          if (
+            !isLlmConnectionBindingVersionCurrent(flow.connectionSlug, flow.bindingVersion)
+            || !isLlmOAuthCredentialFlowCurrent(flow.connectionSlug, flow.oauthEpoch)
+          ) return false
 
-      await credentialManager.setLlmOAuth(flow.connectionSlug, {
-        accessToken: tokens.accessToken,
-        idToken: tokens.idToken,
-        refreshToken: tokens.refreshToken,
-        expiresAt: tokens.expiresAt,
-      })
+          const connection = getLlmConnection(flow.connectionSlug)
+          replacedExistingConnection = !!connection
+          const requiresRoutingRepair = !!connection && (
+            connection.providerType !== 'pi'
+            || connection.authType !== 'oauth'
+            || connection.piAuthProvider !== 'openai-codex'
+            || connection.baseUrl !== undefined
+            || connection.customEndpoint !== undefined
+          )
+          if (requiresRoutingRepair) {
+            const repaired = updateLlmConnection(flow.connectionSlug, {
+              providerType: 'pi',
+              authType: 'oauth',
+              piAuthProvider: 'openai-codex',
+              baseUrl: undefined,
+              customEndpoint: undefined,
+            })
+            if (!repaired) throw new Error(`Failed to repair ChatGPT OAuth routing for ${flow.connectionSlug}`)
+            bumpLlmConnectionBindingVersion(flow.connectionSlug)
+          }
 
-      pendingChatGptFlows.delete(state)
+          // A credential is persisted only after any conflicting canonical row
+          // has been repaired while other row mutations are excluded.
+          const previousCredential = await credentialManager.getLlmOAuth(flow.connectionSlug)
+          if (!isLlmOAuthCredentialFlowCurrent(flow.connectionSlug, flow.oauthEpoch)) return false
+          const restorePreviousCredential = async () => {
+            if (previousCredential) {
+              await credentialManager.setLlmOAuth(flow.connectionSlug, previousCredential)
+            } else {
+              await credentialManager.deleteLlmCredentials(flow.connectionSlug)
+            }
+          }
+          try {
+            await credentialManager.setLlmOAuth(flow.connectionSlug, {
+              accessToken: tokens.accessToken,
+              idToken: tokens.idToken,
+              refreshToken: tokens.refreshToken,
+              expiresAt: tokens.expiresAt,
+            })
+            if (!isLlmOAuthCredentialFlowCurrent(flow.connectionSlug, flow.oauthEpoch)) {
+              await restorePreviousCredential()
+              return false
+            }
+            if (!activateLlmOAuthCredentials(flow.connectionSlug, flow.oauthEpoch)) {
+              await restorePreviousCredential()
+              return false
+            }
+          } catch (error) {
+            await restorePreviousCredential()
+            throw error
+          }
+
+          const identityUpdates: Partial<LlmConnection> = {
+            oauthAccountUuid: identity?.account?.uuid,
+            oauthAccountEmail: identity?.account?.emailAddress,
+            oauthOrganizationUuid: identity?.organization?.uuid,
+            oauthOrganizationName: identity?.organization?.name,
+            oauthProfileVerifiedAt: hasUsableIdentity ? Date.now() : undefined,
+          }
+          try {
+            const updatedExisting = connection
+              ? updateLlmConnection(flow.connectionSlug, identityUpdates)
+              : false
+            if (updatedExisting) {
+              pendingChatGptIdentities.delete(flow.connectionSlug)
+            } else {
+              pendingChatGptIdentities.set(flow.connectionSlug, {
+                identity,
+                ownerClientId: ctx.clientId,
+                oauthEpoch: flow.oauthEpoch,
+                startGeneration: flow.startGeneration,
+                createdAt: Date.now(),
+              })
+            }
+          } catch (identityError) {
+            // Identity is metadata, never an authentication precondition. Keep
+            // the successfully activated credential and report OAuth success.
+            deps.platform.logger?.warn(
+              `[ChatGPT OAuth] Identity persistence failed for ${flow.connectionSlug}: ${identityError instanceof Error ? identityError.message : identityError}`,
+            )
+          }
+          return true
+        })
+      ))
+      removePendingChatGptFlow(state)
+      if (!committed) {
+        return { success: false, error: 'ChatGPT OAuth flow was superseded or logged out' }
+      }
+      if (replacedExistingConnection) {
+        // A live Pi subprocess retains its prior access token in memory. Dispose
+        // exact-slug runtimes before exposing identity for the replacement.
+        await sessionManager.invalidateConnectionAuth(flow.connectionSlug)
+      }
       deps.platform.logger?.info(`[ChatGPT OAuth] Flow complete for ${flow.connectionSlug}`)
       return { success: true }
     } catch (error) {
-      pendingChatGptFlows.delete(state)
+      removePendingChatGptFlow(state)
+      await withLlmCredentialCommit(flow.connectionSlug, async () => {
+        cancelLlmOAuthCredentialFlow(flow.connectionSlug, flow.oauthEpoch)
+      })
       deps.platform.logger?.error('[ChatGPT OAuth] Token exchange failed:', error)
       return {
         success: false,
@@ -705,7 +1441,10 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     if (args?.state) {
       const flow = pendingChatGptFlows.get(args.state)
       if (flow && flow.ownerClientId === ctx.clientId) {
-        pendingChatGptFlows.delete(args.state)
+        removePendingChatGptFlow(args.state)
+        await withLlmCredentialCommit(flow.connectionSlug, async () => {
+          cancelLlmOAuthCredentialFlow(flow.connectionSlug, flow.oauthEpoch)
+        })
         deps.platform.logger?.info(`[ChatGPT OAuth] Flow cancelled for ${flow.connectionSlug}`)
       }
     }
@@ -719,6 +1458,9 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     hasRefreshToken?: boolean
   }> => {
     try {
+      if (!isServerOwnedChatGptOAuthConnection(connectionSlug, getLlmConnection(connectionSlug))) {
+        return { authenticated: false }
+      }
       const credentialManager = getCredentialManager()
       const creds = await credentialManager.getLlmOAuth(connectionSlug)
 
@@ -742,14 +1484,53 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
   // Logout from ChatGPT (clear stored tokens)
   server.handle(RPC_CHANNELS.chatgpt.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
+    if (!isServerOwnedChatGptOAuthConnection(connectionSlug, getLlmConnection(connectionSlug))) {
+      deps.platform.logger?.warn(`Rejected ChatGPT logout target: ${connectionSlug}`)
+      return { success: false }
+    }
+    // Linearize before yielding so a START that has not registered its flow
+    // cannot begin a fresh credential epoch after logout.
+    advanceChatGptOAuthStartGeneration(connectionSlug)
+    revokeLlmCredentials(connectionSlug)
+    clearChatGptOAuthStateForSlug(connectionSlug)
+    let runtimeInvalidation: Promise<void> | undefined
     try {
-      const credentialManager = getCredentialManager()
-      await credentialManager.deleteLlmCredentials(connectionSlug)
-      deps.platform.logger?.info('ChatGPT credentials cleared')
-      return { success: true }
+      const result = await withLlmConnectionMutation(connectionSlug, async () => {
+        const connection = getLlmConnection(connectionSlug)
+        if (!isServerOwnedChatGptOAuthConnection(connectionSlug, connection)) {
+          return { success: false }
+        }
+        const credentialManager = getCredentialManager()
+        revokeLlmCredentials(connectionSlug)
+        clearChatGptOAuthStateForSlug(connectionSlug)
+        runtimeInvalidation = sessionManager.invalidateConnectionAuth(connectionSlug)
+        await withLlmCredentialCommit(connectionSlug, async () => {
+          revokeLlmCredentials(connectionSlug)
+          clearChatGptOAuthStateForSlug(connectionSlug)
+          await credentialManager.deleteLlmCredentials(connectionSlug)
+          const identityCleared = updateLlmConnection(connectionSlug, {
+            oauthAccountUuid: undefined,
+            oauthAccountEmail: undefined,
+            oauthOrganizationUuid: undefined,
+            oauthOrganizationName: undefined,
+            oauthProfileVerifiedAt: undefined,
+          })
+          if (connection && !identityCleared) {
+            throw new Error(`Failed to clear OAuth identity for ${connectionSlug}`)
+          }
+        })
+        deps.platform.logger?.info('ChatGPT credentials cleared')
+        return { success: true }
+      })
+      return result
     } catch (error) {
       deps.platform.logger?.error('Failed to clear ChatGPT credentials:', error)
       return { success: false }
+    } finally {
+      if (runtimeInvalidation) {
+        await runtimeInvalidation
+        await sessionManager.invalidateConnectionAuth(connectionSlug)
+      }
     }
   })
 
@@ -757,18 +1538,104 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // GitHub Copilot OAuth
   // ============================================================
 
+  async function supersedeCopilotOAuthFlows(
+    generation = ++copilotOAuthGeneration,
+  ): Promise<number> {
+    if (generation !== copilotOAuthGeneration) return generation
+    const superseded = [...copilotOAuthAborts.entries()]
+    for (const [, flow] of superseded) flow.controller.abort()
+    copilotOAuthAborts.clear()
+    await Promise.all(superseded.map(([connectionSlug, flow]) => (
+      withLlmConnectionMutation(connectionSlug, async () => {
+        bumpLlmConnectionBindingVersion(connectionSlug)
+        await withLlmCredentialCommit(connectionSlug, async () => {
+          cancelLlmOAuthCredentialFlow(connectionSlug, flow.oauthEpoch)
+        })
+      })
+    )))
+    return generation
+  }
+
   // Start GitHub Copilot OAuth flow (device flow via Pi SDK)
   server.handle(RPC_CHANNELS.copilot.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
     success: boolean
     error?: string
   }> => {
+    if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, getLlmConnection(connectionSlug))) {
+      deps.platform.logger?.warn(`Rejected GitHub Copilot OAuth target: ${connectionSlug}`)
+      return {
+        success: false,
+        error: 'GitHub Copilot OAuth can only target a GitHub Copilot connection.',
+      }
+    }
+    // Reserve request order before dynamic import yields. Logout/delete/cancel
+    // can now fence a device flow that has not reached map registration.
+    const generation = ++copilotOAuthGeneration
+    const slugGeneration = advanceCopilotOAuthStartGeneration(connectionSlug)
+    let pendingFlow: PendingCopilotOAuthFlow | undefined
+    let activated = false
     try {
       const { loginGitHubCopilot } = await import('@earendil-works/pi-ai/oauth')
       const credentialManager = getCredentialManager()
+      if (
+        generation !== copilotOAuthGeneration
+        || !isCopilotOAuthStartGenerationCurrent(connectionSlug, slugGeneration)
+      ) {
+        return { success: false, error: 'GitHub Copilot OAuth was superseded. Please start again.' }
+      }
+      await supersedeCopilotOAuthFlows(generation)
+      if (
+        generation !== copilotOAuthGeneration
+        || !isCopilotOAuthStartGenerationCurrent(connectionSlug, slugGeneration)
+      ) {
+        return { success: false, error: 'GitHub Copilot OAuth was superseded. Please start again.' }
+      }
 
-      // Cancel any previous in-flight flow
-      copilotOAuthAbort?.abort()
-      copilotOAuthAbort = new AbortController()
+      const flowBinding = await withLlmConnectionMutation(connectionSlug, async () => {
+        if (
+          generation !== copilotOAuthGeneration
+          || !isCopilotOAuthStartGenerationCurrent(connectionSlug, slugGeneration)
+        ) return undefined
+        const connection = getLlmConnection(connectionSlug)
+        if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)) return undefined
+        const bindingVersion = bumpLlmConnectionBindingVersion(connectionSlug)
+        const oauthEpoch = await withLlmCredentialCommit(connectionSlug, async () => (
+          beginLlmOAuthCredentialFlow(connectionSlug)
+        ))
+        return { bindingVersion, oauthEpoch }
+      })
+      if (!flowBinding) {
+        if (
+          generation !== copilotOAuthGeneration
+          || !isCopilotOAuthStartGenerationCurrent(connectionSlug, slugGeneration)
+        ) {
+          return { success: false, error: 'GitHub Copilot OAuth was superseded. Please start again.' }
+        }
+        deps.platform.logger?.warn(`Rejected GitHub Copilot OAuth target: ${connectionSlug}`)
+        return {
+          success: false,
+          error: 'GitHub Copilot OAuth can only target a GitHub Copilot connection.',
+        }
+      }
+
+      if (
+        generation !== copilotOAuthGeneration
+        || !isCopilotOAuthStartGenerationCurrent(connectionSlug, slugGeneration)
+      ) {
+        await withLlmCredentialCommit(connectionSlug, async () => {
+          cancelLlmOAuthCredentialFlow(connectionSlug, flowBinding.oauthEpoch)
+        })
+        return { success: false, error: 'GitHub Copilot OAuth was superseded. Please start again.' }
+      }
+      const flow: PendingCopilotOAuthFlow = {
+        controller: new AbortController(),
+        bindingVersion: flowBinding.bindingVersion,
+        oauthEpoch: flowBinding.oauthEpoch,
+        generation,
+        slugGeneration,
+      }
+      pendingFlow = flow
+      copilotOAuthAborts.set(connectionSlug, flow)
 
       deps.platform.logger?.info(`Starting GitHub Copilot OAuth device flow for connection: ${connectionSlug}`)
 
@@ -794,25 +1661,93 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
         onProgress: (message) => {
           deps.platform.logger?.info(`[GitHub OAuth] ${message}`)
         },
-        signal: copilotOAuthAbort.signal,
+        signal: flow.controller.signal,
       })
-
-      copilotOAuthAbort = null
 
       // Store the full OAuth credential:
       // - accessToken = Copilot API token (contains proxy-ep for correct endpoint)
       // - refreshToken = GitHub access token (used to refresh the Copilot token)
       // - expiresAt = Copilot token expiry (short-lived, ~1 hour)
-      await credentialManager.setLlmOAuth(connectionSlug, {
-        accessToken: credentials.access,
-        refreshToken: credentials.refresh,
-        expiresAt: credentials.expires,
-      })
+      const committed = await withLlmConnectionMutation(connectionSlug, async () => {
+        const connection = getLlmConnection(connectionSlug)
+        if (
+          copilotOAuthAborts.get(connectionSlug) !== flow
+          || flow.generation !== copilotOAuthGeneration
+          || !isCopilotOAuthStartGenerationCurrent(connectionSlug, flow.slugGeneration)
+          || !isLlmConnectionBindingVersionCurrent(connectionSlug, flow.bindingVersion)
+          || !isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)
+        ) {
+          return false
+        }
 
+        return withLlmCredentialCommit(connectionSlug, async () => {
+          if (
+            copilotOAuthAborts.get(connectionSlug) !== flow
+            || flow.generation !== copilotOAuthGeneration
+            || !isCopilotOAuthStartGenerationCurrent(connectionSlug, flow.slugGeneration)
+            || !isLlmOAuthCredentialFlowCurrent(connectionSlug, flow.oauthEpoch)
+          ) return false
+          const previousCredential = await credentialManager.getLlmOAuth(connectionSlug)
+          if (
+            copilotOAuthAborts.get(connectionSlug) !== flow
+            || flow.generation !== copilotOAuthGeneration
+            || !isCopilotOAuthStartGenerationCurrent(connectionSlug, flow.slugGeneration)
+            || !isLlmOAuthCredentialFlowCurrent(connectionSlug, flow.oauthEpoch)
+          ) return false
+          const restorePreviousCredential = async () => {
+            if (previousCredential) {
+              await credentialManager.setLlmOAuth(connectionSlug, previousCredential)
+            } else {
+              await credentialManager.deleteLlmCredentials(connectionSlug)
+            }
+          }
+          try {
+            await credentialManager.setLlmOAuth(connectionSlug, {
+              accessToken: credentials.access,
+              refreshToken: credentials.refresh,
+              expiresAt: credentials.expires,
+            })
+            if (
+              copilotOAuthAborts.get(connectionSlug) !== flow
+              || flow.generation !== copilotOAuthGeneration
+              || !isCopilotOAuthStartGenerationCurrent(connectionSlug, flow.slugGeneration)
+              || !isLlmOAuthCredentialFlowCurrent(connectionSlug, flow.oauthEpoch)
+            ) {
+              await restorePreviousCredential()
+              cancelLlmOAuthCredentialFlow(connectionSlug, flow.oauthEpoch)
+              return false
+            }
+            activated = activateLlmOAuthCredentials(connectionSlug, flow.oauthEpoch)
+            if (!activated) {
+              await restorePreviousCredential()
+              return false
+            }
+          } catch (error) {
+            await restorePreviousCredential()
+            throw error
+          }
+          return activated
+        })
+      })
+      if (copilotOAuthAborts.get(connectionSlug) === flow) {
+        copilotOAuthAborts.delete(connectionSlug)
+      }
+      if (!committed) {
+        return { success: false, error: 'GitHub Copilot connection changed. Please start again.' }
+      }
+
+      await sessionManager.invalidateConnectionAuth(connectionSlug)
       deps.platform.logger?.info('GitHub Copilot OAuth completed successfully')
       return { success: true }
     } catch (error) {
-      copilotOAuthAbort = null
+      if (pendingFlow && copilotOAuthAborts.get(connectionSlug) === pendingFlow) {
+        copilotOAuthAborts.delete(connectionSlug)
+      }
+      if (pendingFlow && !activated) {
+        await withLlmCredentialCommit(connectionSlug, async () => {
+          cancelLlmOAuthCredentialFlow(connectionSlug, pendingFlow!.oauthEpoch)
+        })
+      }
       deps.platform.logger?.error('GitHub Copilot OAuth failed:', error)
       return {
         success: false,
@@ -823,11 +1758,11 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
   // Cancel ongoing GitHub OAuth flow
   server.handle(RPC_CHANNELS.copilot.CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
-    if (copilotOAuthAbort) {
-      copilotOAuthAbort.abort()
-      copilotOAuthAbort = null
-      deps.platform.logger?.info('GitHub Copilot OAuth cancelled')
-    }
+    const hadPendingFlow = copilotOAuthAborts.size > 0
+    // Always advance the global generation so CANCEL also wins the narrow
+    // pre-registration window of a concurrently starting device flow.
+    await supersedeCopilotOAuthFlows()
+    if (hadPendingFlow) deps.platform.logger?.info('GitHub Copilot OAuth cancelled')
     return { success: true }
   })
 
@@ -836,12 +1771,16 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
     authenticated: boolean
   }> => {
     try {
-      const credentialManager = getCredentialManager()
-      const creds = await credentialManager.getLlmOAuth(connectionSlug)
+      return await withLlmConnectionMutation(connectionSlug, async () => {
+        const connection = getLlmConnection(connectionSlug)
+        if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)) {
+          return { authenticated: false }
+        }
 
-      return {
-        authenticated: !!creds?.accessToken,
-      }
+        const credentialManager = getCredentialManager()
+        const creds = await credentialManager.getLlmOAuth(connectionSlug)
+        return { authenticated: !!creds?.accessToken }
+      })
     } catch (error) {
       deps.platform.logger?.error('Failed to get GitHub auth status:', error)
       return { authenticated: false }
@@ -850,14 +1789,46 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
   // Logout from Copilot (clear stored tokens)
   server.handle(RPC_CHANNELS.copilot.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
+    if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, getLlmConnection(connectionSlug))) {
+      deps.platform.logger?.warn(`Rejected GitHub Copilot logout target: ${connectionSlug}`)
+      return { success: false }
+    }
+    advanceCopilotOAuthStartGeneration(connectionSlug)
+    revokeLlmCredentials(connectionSlug)
+    const pending = copilotOAuthAborts.get(connectionSlug)
+    pending?.controller.abort()
+    copilotOAuthAborts.delete(connectionSlug)
+    let runtimeInvalidation: Promise<void> | undefined
     try {
-      const credentialManager = getCredentialManager()
-      await credentialManager.deleteLlmCredentials(connectionSlug)
-      deps.platform.logger?.info('Copilot credentials cleared')
-      return { success: true }
+      const result = await withLlmConnectionMutation(connectionSlug, async () => {
+        const connection = getLlmConnection(connectionSlug)
+        if (!isGitHubCopilotOAuthConnectionTarget(connectionSlug, connection)) {
+          deps.platform.logger?.warn(`Rejected GitHub Copilot logout target: ${connectionSlug}`)
+          return { success: false }
+        }
+
+        const credentialManager = getCredentialManager()
+        revokeLlmCredentials(connectionSlug)
+        runtimeInvalidation = sessionManager.invalidateConnectionAuth(connectionSlug)
+        await withLlmCredentialCommit(connectionSlug, async () => {
+          revokeLlmCredentials(connectionSlug)
+          await credentialManager.deleteLlmCredentials(connectionSlug)
+        })
+        // Invalidate a START that already returned from the provider even if
+        // the SDK ignored AbortSignal while logout was committing.
+        bumpLlmConnectionBindingVersion(connectionSlug)
+        deps.platform.logger?.info('Copilot credentials cleared')
+        return { success: true }
+      })
+      return result
     } catch (error) {
       deps.platform.logger?.error('Failed to clear Copilot credentials:', error)
       return { success: false }
+    } finally {
+      if (runtimeInvalidation) {
+        await runtimeInvalidation
+        await sessionManager.invalidateConnectionAuth(connectionSlug)
+      }
     }
   })
 }

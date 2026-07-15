@@ -40,12 +40,19 @@ function setup(llmConnections: any[]) {
     'utf-8',
   )
 
-  function runUpdate(slug: string, updates: Record<string, unknown>): boolean {
+  function runUpdate(
+    slug: string,
+    updates: Record<string, unknown>,
+    explicitUndefinedKeys: string[] = [],
+  ): boolean {
     const updatesJson = JSON.stringify(updates)
+    const undefinedAssignments = explicitUndefinedKeys
+      .map(key => `${JSON.stringify(key)}: undefined`)
+      .join(',')
     const run = Bun.spawnSync([
       process.execPath,
       '--eval',
-      `import { updateLlmConnection } from '${STORAGE_MODULE_PATH}'; const ok = updateLlmConnection(${JSON.stringify(slug)}, ${updatesJson}); process.exit(ok ? 0 : 1);`,
+      `import { updateLlmConnection } from '${STORAGE_MODULE_PATH}'; const updates = { ...${updatesJson}, ${undefinedAssignments} }; const ok = updateLlmConnection(${JSON.stringify(slug)}, updates); process.exit(ok ? 0 : 1);`,
     ], {
       env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
       stdout: 'pipe',
@@ -62,8 +69,107 @@ function setup(llmConnections: any[]) {
     return config.llmConnections.find((c: any) => c.slug === slug)
   }
 
-  return { configDir, configPath, runUpdate, readConnection }
+  function readResolvedConnection(slug: string): any {
+    const run = Bun.spawnSync([
+      process.execPath,
+      '--eval',
+      `import { getLlmConnection } from '${STORAGE_MODULE_PATH}'; console.log(JSON.stringify(getLlmConnection(${JSON.stringify(slug)})));`,
+    ], {
+      env: { ...process.env, CRAFT_CONFIG_DIR: configDir },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    if (run.exitCode !== 0) throw new Error(`read subprocess failed:\n${run.stderr.toString()}`)
+    return JSON.parse(run.stdout.toString())
+  }
+
+  return { configDir, configPath, runUpdate, readConnection, readResolvedConnection }
 }
+
+describe('server-owned OAuth routing normalization', () => {
+  it('quarantines a conflicting ChatGPT row before any consumer can observe its OAuth routing', () => {
+    const { readResolvedConnection } = setup([makeConnection({
+      slug: 'chatgpt-plus-2',
+      providerType: 'anthropic',
+      authType: 'oauth',
+      piAuthProvider: 'github-copilot',
+      baseUrl: 'https://attacker.example.test/v1',
+      customEndpoint: { api: 'openai-completions' },
+    })])
+
+    const resolved = readResolvedConnection('chatgpt-plus-2')
+    expect(resolved.providerType).toBe('anthropic')
+    expect(resolved.authType).toBe('none')
+    expect(resolved.piAuthProvider).toBe('github-copilot')
+    expect(resolved.baseUrl).toBeUndefined()
+    expect(resolved.customEndpoint).toBeUndefined()
+  })
+
+  it('keeps canonical provider precedence and quarantines conflicting Claude/Copilot rows', () => {
+    const { readResolvedConnection } = setup([
+      makeConnection({
+        slug: 'claude-max',
+        providerType: 'pi',
+        authType: 'oauth',
+        piAuthProvider: 'openai-codex',
+        baseUrl: 'https://attacker.example.test/claude',
+      }),
+      makeConnection({
+        slug: 'github-copilot',
+        providerType: 'anthropic',
+        authType: 'oauth',
+        piAuthProvider: undefined,
+        baseUrl: 'https://attacker.example.test/copilot',
+      }),
+    ])
+
+    const claude = readResolvedConnection('claude-max')
+    expect(claude.providerType).toBe('pi')
+    expect(claude.piAuthProvider).toBe('openai-codex')
+    expect(claude.authType).toBe('none')
+    expect(claude.baseUrl).toBeUndefined()
+
+    const copilot = readResolvedConnection('github-copilot')
+    expect(copilot.providerType).toBe('anthropic')
+    expect(copilot.authType).toBe('none')
+    expect(copilot.baseUrl).toBeUndefined()
+  })
+
+  it('forces valid legacy Claude OAuth onto the official endpoint and quarantines conflicting Pi provenance', () => {
+    const { readResolvedConnection } = setup([
+      makeConnection({
+        slug: 'legacy-claude-oauth',
+        providerType: 'anthropic',
+        authType: 'oauth',
+        piAuthProvider: undefined,
+        baseUrl: 'https://attacker.example.test/v1',
+        customEndpoint: { api: 'anthropic-messages' },
+      }),
+      makeConnection({
+        slug: 'legacy-conflicting-oauth',
+        providerType: 'anthropic',
+        authType: 'oauth',
+        piAuthProvider: 'openai-codex',
+        baseUrl: 'https://attacker.example.test/v1',
+        customEndpoint: { api: 'anthropic-messages' },
+      }),
+    ])
+
+    const resolved = readResolvedConnection('legacy-claude-oauth')
+    expect(resolved.providerType).toBe('anthropic')
+    expect(resolved.authType).toBe('oauth')
+    expect(resolved.piAuthProvider).toBeUndefined()
+    expect(resolved.baseUrl).toBeUndefined()
+    expect(resolved.customEndpoint).toBeUndefined()
+
+    const conflicting = readResolvedConnection('legacy-conflicting-oauth')
+    expect(conflicting.providerType).toBe('anthropic')
+    expect(conflicting.authType).toBe('none')
+    expect(conflicting.piAuthProvider).toBe('openai-codex')
+    expect(conflicting.baseUrl).toBeUndefined()
+    expect(conflicting.customEndpoint).toBeUndefined()
+  })
+})
 
 function makeConnection(overrides: Record<string, unknown> = {}) {
   return {
@@ -114,12 +220,24 @@ describe('updateLlmConnection – customEndpoint', () => {
     const conn = readConnection('custom-compat')
     expect(conn.customEndpoint).toEqual({ api: 'anthropic-messages' })
   })
+
+  it('clears endpoint routing fields only when explicitly requested', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ customEndpoint: { api: 'openai-completions' } }),
+    ])
+
+    expect(runUpdate('custom-compat', {}, ['baseUrl', 'customEndpoint'])).toBe(true)
+
+    const conn = readConnection('custom-compat')
+    expect(conn.baseUrl).toBeUndefined()
+    expect(conn.customEndpoint).toBeUndefined()
+  })
 })
 
-describe('updateLlmConnection – Anthropic OAuth identity (issue #838)', () => {
+describe('updateLlmConnection – provider-neutral OAuth identity', () => {
   const identity = {
     oauthAccountUuid: 'acct-uuid-123',
-    oauthAccountEmail: 'gyula@craft.do',
+    oauthAccountEmail: 'person@example.test',
     oauthOrganizationUuid: 'org-uuid-456',
     oauthOrganizationName: 'Craft',
     oauthProfileVerifiedAt: 1_700_000_000_000,
@@ -157,5 +275,50 @@ describe('updateLlmConnection – Anthropic OAuth identity (issue #838)', () => 
     expect(conn.oauthOrganizationUuid).toBe(identity.oauthOrganizationUuid)
     expect(conn.oauthOrganizationName).toBe(identity.oauthOrganizationName)
     expect(conn.oauthProfileVerifiedAt).toBe(identity.oauthProfileVerifiedAt)
+  })
+
+  it('atomically replaces identity and clears absent fields on reauth', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ slug: 'chatgpt-plus', authType: 'oauth', ...identity }),
+    ])
+
+    const ok = runUpdate(
+      'chatgpt-plus',
+      {
+        oauthAccountUuid: 'new-user',
+        oauthAccountEmail: 'new-person@example.test',
+        oauthOrganizationUuid: 'new-workspace',
+        oauthProfileVerifiedAt: 1_800_000_000_000,
+      },
+      ['oauthOrganizationName'],
+    )
+    expect(ok).toBe(true)
+
+    const conn = readConnection('chatgpt-plus')
+    expect(conn.oauthAccountUuid).toBe('new-user')
+    expect(conn.oauthAccountEmail).toBe('new-person@example.test')
+    expect(conn.oauthOrganizationUuid).toBe('new-workspace')
+    expect(conn.oauthOrganizationName).toBeUndefined()
+    expect(conn.oauthProfileVerifiedAt).toBe(1_800_000_000_000)
+  })
+
+  it('clears every identity field when explicitly requested', () => {
+    const { runUpdate, readConnection } = setup([
+      makeConnection({ slug: 'chatgpt-plus', authType: 'oauth', ...identity }),
+    ])
+
+    const fields = [
+      'oauthAccountUuid',
+      'oauthAccountEmail',
+      'oauthOrganizationUuid',
+      'oauthOrganizationName',
+      'oauthProfileVerifiedAt',
+    ]
+    expect(runUpdate('chatgpt-plus', {}, fields)).toBe(true)
+
+    const conn = readConnection('chatgpt-plus')
+    for (const field of fields) {
+      expect(conn[field]).toBeUndefined()
+    }
   })
 })

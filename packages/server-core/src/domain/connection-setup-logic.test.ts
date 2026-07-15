@@ -5,7 +5,63 @@ import {
   setupTestRequiresApiKey,
   resolveCustomEndpointSetup,
   createBuiltInConnection,
+  isChatGptOAuthConnectionTarget,
+  isClaudeOAuthConnectionTarget,
+  isGitHubCopilotOAuthConnectionTarget,
+  isServerOwnedOAuthBuiltInSlug,
 } from './connection-setup-logic'
+
+describe('provider-specific OAuth connection targets', () => {
+  it('recognizes suffixed built-in slugs before their config rows exist', () => {
+    expect(isChatGptOAuthConnectionTarget('chatgpt-plus-2')).toBe(true)
+    expect(isChatGptOAuthConnectionTarget('codex')).toBe(true)
+    expect(isClaudeOAuthConnectionTarget('claude-max-2')).toBe(true)
+    expect(isGitHubCopilotOAuthConnectionTarget('github-copilot-2')).toBe(true)
+    expect(isServerOwnedOAuthBuiltInSlug('codex')).toBe(true)
+  })
+
+  it('recognizes legacy/existing provider provenance without trusting the slug', () => {
+    expect(isChatGptOAuthConnectionTarget('codex', {
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'openai-codex',
+    })).toBe(true)
+    expect(isClaudeOAuthConnectionTarget('legacy-claude', {
+      providerType: 'anthropic',
+      authType: 'oauth',
+    })).toBe(true)
+    expect(isGitHubCopilotOAuthConnectionTarget('legacy-copilot', {
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'github-copilot',
+    })).toBe(true)
+  })
+
+  it('does not let one provider handler adopt another provider target', () => {
+    const chatGpt = {
+      providerType: 'pi' as const,
+      authType: 'oauth' as const,
+      piAuthProvider: 'openai-codex',
+    }
+    expect(isClaudeOAuthConnectionTarget('chatgpt-plus-2', chatGpt)).toBe(false)
+    expect(isGitHubCopilotOAuthConnectionTarget('chatgpt-plus-2', chatGpt)).toBe(false)
+    expect(isClaudeOAuthConnectionTarget('claude-max', chatGpt)).toBe(false)
+    expect(isGitHubCopilotOAuthConnectionTarget('github-copilot', chatGpt)).toBe(false)
+    expect(isChatGptOAuthConnectionTarget('claude-max', chatGpt)).toBe(false)
+  })
+
+  it('fails closed when a non-ChatGPT canonical slug has a conflicting row', () => {
+    expect(isClaudeOAuthConnectionTarget('claude-max', {
+      providerType: 'pi',
+      authType: 'oauth',
+      piAuthProvider: 'github-copilot',
+    })).toBe(false)
+    expect(isGitHubCopilotOAuthConnectionTarget('github-copilot', {
+      providerType: 'anthropic',
+      authType: 'oauth',
+    })).toBe(false)
+  })
+})
 
 describe('validateSetupTestInput', () => {
   it('rejects pi custom endpoint tests without piAuthProvider', () => {

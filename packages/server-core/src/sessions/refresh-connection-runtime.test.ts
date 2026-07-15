@@ -40,7 +40,7 @@ function createAgentStub(opts: {
       if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
       return result
     }),
-    dispose: () => { /* no-op for tests */ },
+    dispose: jest.fn(),
   }
 }
 
@@ -226,5 +226,35 @@ describe('refreshConnectionRuntime', () => {
         }
       }
     }
+  })
+})
+
+describe('invalidateConnectionAuth', () => {
+  let tmpRoot: string
+  let sm: SessionManager
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'sm-auth-invalidate-'))
+    sm = new SessionManager()
+  })
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true })
+  })
+
+  it('disposes only live runtimes bound to the exact logged-out slug', async () => {
+    const matchingAgent = createAgentStub({ isProcessing: true })
+    const otherAgent = createAgentStub()
+    const matching = injectSession(sm, 'matching', tmpRoot, 'slug-A', matchingAgent)
+    const other = injectSession(sm, 'other', tmpRoot, 'slug-B', otherAgent)
+    const cold = injectSession(sm, 'cold', tmpRoot, 'slug-A', null)
+
+    await sm.invalidateConnectionAuth('slug-A')
+
+    expect(matching.agent).toBeNull()
+    expect(matchingAgent.dispose).toHaveBeenCalledTimes(1)
+    expect(other.agent).toBe(otherAgent)
+    expect(otherAgent.dispose).not.toHaveBeenCalled()
+    expect(cold.agent).toBeNull()
   })
 })
