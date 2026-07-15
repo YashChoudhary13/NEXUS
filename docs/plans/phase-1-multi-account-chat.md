@@ -2,11 +2,13 @@
 
 **Objective:** make the existing Craft Agents chat experience work naturally with multiple
 Claude and Codex subscription identities.
-**Status:** `[DECIDED]` — **signed off by the owner 2026-07-14**; §8 questions answered
-(D-020…D-023), implementation authorized and delegated via the
-[Codex kickoff prompt](./phase-1-kickoff-prompt-codex.md). Implementation begins with the
-S1 spike; **no Phase 1 code has landed yet**. All code references verified against baseline
-`4289b16` + fork docs commits.
+**Status:** `[DECIDED]` — **signed off by the owner 2026-07-14; implementation is in progress
+and Phase 1 is not complete.** S1 passed its engineering gate. PR-1A is implemented and open
+as [GitHub PR #1](https://github.com/YashChoudhary13/NEXUS/pull/1). PR-1B and PR-1C are
+implemented and locally verified in separate worktrees; publication is paused because the
+required `gh` CLI is not installed. PR-1D, PR-1F, and PR-1E remain. No Phase 1 feature branch
+has merged into `develop`, and the independently billed-subscription acceptance wording
+remains `[OPEN]`.
 
 > Path note: the master plan referenced `docs/superpowers/plans/…`; per the roadmap decision
 > this repo keeps phase plans here in `docs/plans/`.
@@ -120,6 +122,9 @@ simultaneously" + "restart restores accounts" pass through the UI alone.
 
 ### PR-1C — Duplicate-account detection, generalized
 
+**Implementation status (2026-07-15):** `[IMPLEMENTED — PUBLICATION PENDING]` on
+`feature/duplicate-account-detection`.
+
 **Change:** extend the existing Claude-only duplicate computation to all OAuth connections.
 
 - Extract the `:953` logic into a shared helper
@@ -136,6 +141,20 @@ simultaneously" + "restart restores accounts" pass through the UI alone.
 
 **DoD:** logging into the same OpenAI account under two connection names produces the
 warning; two genuinely different accounts do not.
+
+**Implemented detail:** `findDuplicateAccountGroups` is a pure renderer helper keyed by
+provider family plus UUID-first/normalized-email-fallback identity. Anthropic, Codex, and
+Copilot are explicit families; unknown Pi OAuth providers receive isolated family keys.
+Missing identity and non-OAuth connections are never flagged. Both duplicate rows receive a
+persistent warning, and a saved setup that joins an existing group emits the generic quota
+explanation. Post-save refresh/warning failures are fail-soft after durable config persistence.
+
+**Verification:** focused **6 pass / 9 assertions**; renderer **476 pass / 809 assertions**;
+shared **108 pass**; shared/Electron typechecks; i18n parity+sorting (**1,640 keys per
+locale**); changed-file lint (0 errors, 3 inherited warnings); full Electron build. An isolated
+`/tmp` config/home/user-data smoke rendered Duplicate provider account on two synthetic Codex
+rows with the same principal while leaving an unrelated local row unflagged. A real duplicate
+OAuth login remains part of the final owner acceptance matrix.
 
 ### PR-1D — Account-aware model picker
 

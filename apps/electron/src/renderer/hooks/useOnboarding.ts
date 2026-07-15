@@ -34,7 +34,7 @@ interface UseOnboardingOptions {
   onDismiss?: () => void
   /** Called immediately after config is saved to disk (before wizard closes).
    *  Use this to propagate billing/model changes to the UI without waiting for onComplete. */
-  onConfigSaved?: () => void
+  onConfigSaved?: (connectionSlug: string) => void | Promise<void>
   /** Slug of existing connection being edited (null = creating new) */
   editingSlug?: string | null
   /** Set of slugs already in use (for generating unique slugs when creating new) */
@@ -290,7 +290,13 @@ export function useOnboarding({
       if (result.success) {
         setState(s => ({ ...s, completionStatus: 'complete' }))
         // Notify caller immediately so UI can reflect billing/model changes
-        onConfigSaved?.()
+        try {
+          await onConfigSaved?.(setup.slug)
+        } catch (error) {
+          // Config is already durable. A renderer refresh/notification failure must not
+          // misreport the successful login as a failed save.
+          console.error('[Onboarding] Post-save refresh failed:', error)
+        }
         return true
       } else {
         console.error('[Onboarding] Save failed:', result.error)
