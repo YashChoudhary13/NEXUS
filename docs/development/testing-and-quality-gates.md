@@ -66,6 +66,28 @@ workspace's `rootPath` resolved to the literal `~/.craft-agent/workspaces/my-wor
 Treat `CRAFT_CONFIG_DIR` as isolating *global config*, not *workspace data*. (Upstream
 behavior — documented, not fixed; candidate note for the repo-health workstream.)
 
+## Phase 1 PR-1C verification (2026-07-15)
+
+Pinned runtime: `/tmp/nexus-bun-1.3.10/bin/bun` (Bun 1.3.10).
+
+| Gate | Result |
+|------|--------|
+| `bun run test:duplicate-accounts` | ✅ 6 pass / 9 assertions |
+| `bun test apps/electron/src/renderer` | ✅ 476 pass / 809 assertions |
+| `bun run test:shared:all` | ✅ 108 pass |
+| Electron + shared typechecks | ✅ clean |
+| locale parity + sorted | ✅ 6 translated locales, 1,640 keys each |
+| changed-file Electron eslint | ✅ 0 errors; 3 inherited hook warnings outside PR-1C hunks |
+| `bun run electron:build` | ✅ main/preload/renderer/resources/assets; inherited missing-tsconfig and chunk warnings only |
+| isolated built-app settings smoke | ✅ exactly two same-principal Codex rows flagged; unrelated local row unflagged |
+
+The UI smoke used synthetic identities and a local no-auth default entirely under `/tmp`
+(`CRAFT_CONFIG_DIR`, HOME, and Electron user-data) and invoked no OAuth or real credentials.
+An initial invalid smoke build was rejected because a borrowed `node_modules` symlink resolved
+workspace packages to the PR-1B worktree and bundled stale locale text. The dependency proxy
+was corrected so `@craft-agent/*` links resolve to PR-1C, the full build was rerun, the bundle
+was checked for the new generic/quota copy, and only the corrected build was accepted.
+
 ## Failure categories explained
 
 - **Stripped OSS files** (not code defects): `tsconfig.base.json` is missing — four tsconfigs

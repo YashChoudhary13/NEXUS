@@ -55,6 +55,10 @@ import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
 import { getModelsForProviderType, resolveMidStreamBehavior, type CustomEndpointApi, type MidStreamBehavior } from '@config/llm-connections'
 import { toast } from 'sonner'
+import {
+  findDuplicateAccountGroups,
+  findDuplicateAccountSlugs,
+} from '@/lib/oauth-account-duplicates'
 
 /**
  * Compact token count: 1234 → "1.2K", 1234567 → "1.2M". Used by the RTK
@@ -307,7 +311,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                   </span>
                 </TooltipTrigger>
-                <TooltipContent>{t("settings.ai.duplicateAccount")}</TooltipContent>
+                <TooltipContent>{t("settings.ai.duplicateAccountDescription")}</TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -715,6 +719,23 @@ export default function AiSettingsPage() {
     setEditingConnectionSlug(null)
   }, [setFullscreenOverlayOpen])
 
+  const handleConfigSaved = useCallback(async (savedSlug: string) => {
+    try {
+      await refreshLlmConnections()
+      const refreshedConnections = await window.electronAPI.listLlmConnectionsWithStatus()
+      const duplicateGroup = findDuplicateAccountGroups(refreshedConnections)
+        .find(group => group.connectionSlugs.includes(savedSlug))
+      if (duplicateGroup) {
+        toast.warning(t('settings.ai.duplicateAccount'), {
+          description: t('settings.ai.duplicateAccountDescription'),
+        })
+      }
+    } catch (error) {
+      // Identity warnings are fail-soft and must never turn a saved login into a failure.
+      console.error('Failed to check for duplicate OAuth accounts:', error)
+    }
+  }, [refreshLlmConnections, t])
+
   // Derive existing slugs for unique slug generation
   const existingSlugs = useMemo(
     () => new Set(llmConnections.map(c => c.slug)),
@@ -724,7 +745,7 @@ export default function AiSettingsPage() {
   // OnboardingWizard hook for editing API connection
   const apiSetupOnboarding = useOnboarding({
     initialStep: 'provider-select',
-    onConfigSaved: refreshLlmConnections,
+    onConfigSaved: handleConfigSaved,
     onComplete: () => {
       closeApiSetup()
       refreshLlmConnections?.()
@@ -945,16 +966,10 @@ export default function AiSettingsPage() {
     return llmConnections.find(c => c.isDefault)
   }, [llmConnections])
 
-  // Anthropic account UUIDs that resolve from 2+ connections (issue #838).
-  // Surfaces a warning when several Claude connections share one account/quota.
-  const duplicateAccountUuids = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const conn of llmConnections) {
-      const uuid = conn.oauthAccountUuid
-      if (uuid) counts.set(uuid, (counts.get(uuid) ?? 0) + 1)
-    }
-    return new Set([...counts].filter(([, n]) => n > 1).map(([uuid]) => uuid))
-  }, [llmConnections])
+  const duplicateAccountSlugs = useMemo(
+    () => findDuplicateAccountSlugs(llmConnections),
+    [llmConnections],
+  )
 
   const defaultModel = defaultConnection?.defaultModel ?? ''
 
@@ -1135,7 +1150,7 @@ export default function AiSettingsPage() {
                         onSetMidStreamBehavior={(behavior) => handleSetMidStreamBehavior(conn, behavior)}
                         validationState={validationStates[conn.slug]?.state || 'idle'}
                         validationError={validationStates[conn.slug]?.error}
-                        isDuplicateAccount={!!conn.oauthAccountUuid && duplicateAccountUuids.has(conn.oauthAccountUuid)}
+                        isDuplicateAccount={duplicateAccountSlugs.has(conn.slug)}
                       />
                     ))
                   )}
