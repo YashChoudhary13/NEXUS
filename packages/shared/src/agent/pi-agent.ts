@@ -62,7 +62,7 @@ import {
 
 // ChatGPT OAuth token refresh (used when Pi routes ChatGPT auth)
 import { refreshChatGptTokens } from '../auth/chatgpt-oauth.ts';
-import { parseChatGptIdToken } from '../auth/oauth-identity.ts';
+import { parseChatGptIdToken, resolveGitHubOAuthIdentity } from '../auth/oauth-identity.ts';
 
 // Session-scoped tool callbacks (for SubmitPlan, source auth, etc.)
 import {
@@ -885,6 +885,9 @@ export class PiAgent extends BaseAgent {
           // Copilot: refresh the short-lived Copilot token using the GitHub access token
           const { refreshGitHubCopilotToken } = await import('@earendil-works/pi-ai/oauth');
           const newCreds = await refreshGitHubCopilotToken(stored.refreshToken);
+          const identity = isRefreshGenerationCurrent()
+            ? await resolveGitHubOAuthIdentity(newCreds.refresh)
+            : undefined;
           committed = await withLlmCredentialCommit(slug, async () => {
             if (!isRefreshGenerationCurrent()) return false;
             await credentialManager.setLlmOAuth(slug, {
@@ -892,7 +895,27 @@ export class PiAgent extends BaseAgent {
               refreshToken: newCreds.refresh,
               expiresAt: newCreds.expires,
             });
-            return isRefreshGenerationCurrent();
+            if (!isRefreshGenerationCurrent()) return false;
+
+            // Preserve the last verified GitHub profile when lookup fails. Identity is
+            // optional metadata and must never make a successful token refresh fail.
+            if (identity) {
+              try {
+                const identityUpdated = updateLlmConnection(slug, {
+                  oauthAccountUuid: identity.account?.uuid,
+                  oauthAccountEmail: identity.account?.emailAddress,
+                  oauthOrganizationUuid: identity.organization?.uuid,
+                  oauthOrganizationName: identity.organization?.name,
+                  oauthProfileVerifiedAt: Date.now(),
+                });
+                if (!identityUpdated) {
+                  this.debug(`Copilot identity refresh skipped because slug "${slug}" no longer exists`);
+                }
+              } catch (identityError) {
+                this.debug(`Copilot identity refresh persistence failed: ${identityError instanceof Error ? identityError.message : String(identityError)}`);
+              }
+            }
+            return true;
           });
         } else {
           // ChatGPT Plus: use existing refresh utility

@@ -3,6 +3,8 @@ import {
   decodeJwtClaims,
   parseChatGptIdentity,
   parseChatGptIdToken,
+  parseGitHubIdentity,
+  resolveGitHubOAuthIdentity,
 } from '../oauth-identity.ts'
 
 const AUTH_CLAIM = 'https://api.openai.com/auth'
@@ -122,5 +124,119 @@ describe('parseChatGptIdentity', () => {
     }))).toEqual({
       account: { uuid: 'user-a', emailAddress: 'person@example.test' },
     })
+  })
+})
+
+describe('parseGitHubIdentity', () => {
+  it('keeps the stable GitHub user id, public email, and first public organization', () => {
+    expect(parseGitHubIdentity(
+      {
+        id: 123456,
+        node_id: 'user-node-fallback',
+        login: 'octocat',
+        email: 'octocat@example.test',
+      },
+      [null, {}, { id: 987, login: 'github', node_id: 'org-node-fallback' }],
+    )).toEqual({
+      account: {
+        uuid: '123456',
+        emailAddress: 'octocat@example.test',
+      },
+      organization: {
+        uuid: '987',
+        name: 'github',
+      },
+    })
+  })
+
+  it('uses the verified GitHub handle when the profile email is private', () => {
+    expect(parseGitHubIdentity({ id: 123456, login: 'private-octocat', email: null }))
+      .toEqual({
+        account: {
+          uuid: '123456',
+          emailAddress: '@private-octocat',
+        },
+      })
+  })
+
+  it.each([
+    [undefined],
+    [null],
+    [[]],
+    [{}],
+    [{ id: -1, login: '', email: 42 }],
+  ])('returns undefined for malformed or absent identity without throwing: %p', user => {
+    expect(() => parseGitHubIdentity(user)).not.toThrow()
+    expect(parseGitHubIdentity(user)).toBeUndefined()
+  })
+})
+
+describe('resolveGitHubOAuthIdentity', () => {
+  it('looks up the authenticated user and first public organization with scoped headers', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const responses = [
+      { id: 123456, login: 'octocat', email: 'octocat@example.test' },
+      [{ id: 987, login: 'github' }],
+    ]
+    const identity = await resolveGitHubOAuthIdentity('github-access-token', {
+      fetchFn: async (input, init) => {
+        requests.push({ url: String(input), init })
+        return Response.json(responses.shift())
+      },
+    })
+
+    expect(identity).toEqual({
+      account: { uuid: '123456', emailAddress: 'octocat@example.test' },
+      organization: { uuid: '987', name: 'github' },
+    })
+    expect(requests.map(request => request.url)).toEqual([
+      'https://api.github.com/user',
+      'https://api.github.com/users/octocat/orgs?per_page=1',
+    ])
+    for (const request of requests) {
+      const headers = new Headers(request.init?.headers)
+      expect(headers.get('accept')).toBe('application/vnd.github+json')
+      expect(headers.get('authorization')).toBe('Bearer github-access-token')
+      expect(headers.get('user-agent')).toBe('NEXUS')
+      expect(headers.get('x-github-api-version')).toBe('2022-11-28')
+      expect(request.init?.signal).toBeInstanceOf(AbortSignal)
+    }
+  })
+
+  it('keeps the verified user when the optional organization lookup fails', async () => {
+    let requestCount = 0
+    const identity = await resolveGitHubOAuthIdentity('github-access-token', {
+      fetchFn: async () => {
+        requestCount++
+        if (requestCount === 1) {
+          return Response.json({ id: 123456, login: 'private-octocat', email: null })
+        }
+        return new Response('scope unavailable', { status: 403 })
+      },
+    })
+
+    expect(identity).toEqual({
+      account: { uuid: '123456', emailAddress: '@private-octocat' },
+    })
+  })
+
+  it('returns undefined for an authenticated-user API error', async () => {
+    expect(await resolveGitHubOAuthIdentity('github-access-token', {
+      fetchFn: async () => new Response('unauthorized', { status: 401 }),
+    })).toBeUndefined()
+  })
+
+  it('never throws when the lookup rejects or receives malformed data', async () => {
+    await expect(resolveGitHubOAuthIdentity('github-access-token', {
+      fetchFn: async () => { throw new Error('network unavailable') },
+    })).resolves.toBeUndefined()
+
+    await expect(resolveGitHubOAuthIdentity('github-access-token', {
+      fetchFn: async () => Response.json([]),
+    })).resolves.toBeUndefined()
+
+    await expect(resolveGitHubOAuthIdentity(undefined, {
+      fetchFn: async () => { throw new Error('must not be called') },
+    })).resolves.toBeUndefined()
   })
 })

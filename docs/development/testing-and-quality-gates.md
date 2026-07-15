@@ -120,6 +120,34 @@ path never calls whole-slug deletion. The exact runtime filter still expects bot
 passes: the pre-delete pass begins disposal, while the post-delete pass catches a runtime created
 during credential mutation (required for non-OAuth rows without a credential lifecycle epoch).
 
+## Phase 1 PR-1F verification (2026-07-15)
+
+All CI tests use fabricated GitHub responses; no live GitHub call occurs in automation. The
+Pi SDK source mini-verification confirmed the Copilot device flow requests only `read:user`.
+That scope can read `/user`, but profile email may be private/null; `user:email` would be a
+separate broader scope. PR-1F therefore keeps a public email when present and otherwise stores
+the provider-verified `@login` as the visible account label. Organization enrichment uses only
+the first publicly visible membership from `/users/{login}/orgs` and is always optional.
+
+| Command / check | Exit | Result |
+|-----------------|------|--------|
+| `bun run test:copilot-identity` | 0 | ✅ 40 pass / 0 fail / 93 assertions |
+| `bun run test:account-identity` | 0 | ✅ 108 pass / 462 assertions + isolated cleanup 1 / 2 + exact runtime 1 / 5 = **110 pass / 469 assertions** |
+| `bun run test:shared:all` | 0 | ✅ 108 pass / 0 fail / 227 assertions |
+| core/shared/server-core/server typechecks | 0 | ✅ clean |
+| Electron + UI typechecks | 0 | ✅ clean |
+| `typecheck:all` | 2 | ⚠️ reaches inherited missing `tsconfig.base.json` at `session-tools-core`; reproduced unchanged in PR-1D |
+| changed-file package-local ESLint | 0 | ✅ clean |
+| `git diff --check` | 0 | ✅ clean |
+| `NODE_OPTIONS=--max-old-space-size=8192 bun run electron:build` | 0 | ✅ main + preload + renderer + resources + assets |
+| isolated built-app Settings → AI smoke | 0 | ✅ `Copilot Builder · @copilot-builder · nexus-labs` rendered; no real credential used |
+
+Coverage includes response parsing, missing/private email, API errors, thrown network errors,
+optional organization failure, request headers, first-login OAuth-before-row receipts, wrong-client
+identity forgery rejection, existing-row reauth, lookup-failure profile preservation, exact-slug
+token refresh re-stamping, and logout/refresh races. The production build retains only the known
+missing-base-config and Vite chunk-size warnings.
+
 ## Failure categories explained
 
 - **Stripped OSS files** (not code defects): `tsconfig.base.json` is missing — four tsconfigs
